@@ -158,8 +158,8 @@ button,input,select,textarea{font-family:inherit;font-size:15px}
 </style>
 
 <!-- Firebase -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://unpkg.com/firebase@9.23.0/compat/app/dist/index.js"></script>
+<script src="https://unpkg.com/firebase@9.23.0/compat/database/dist/index.js"></script>
 </head>
 <body>
 
@@ -214,6 +214,16 @@ function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&l
 function time(ts){return new Date(ts).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 function dateTime(ts){return new Date(ts).toLocaleString('ru-RU')}
 
+// emptyClean — чистая структура без демо-данных (для Firebase)
+function emptyClean(){
+  return {
+    contractors:[],trucks:[],objects:[],quarries:[],warehouses:[],
+    routes:[],trips:[],periods:[],dieselIn:[],dieselOut:[],pp:[],
+    marker:{},norms:[],spectech:[],hours:[],specFuel:[],truckDays:[],
+    prices:{transportRate:52,dieselPrice:275,ppPrice:6500}
+  };
+}
+// empty — с демо-данными (только для локального fallback)
 function empty(){
   return {
     contractors:[{id:'c1',name:'ТОО Бузачи Транс'},{id:'c2',name:'ИП Иванов'}],
@@ -240,6 +250,10 @@ const firebaseConfig = {
   appId: "1:385714399238:web:2832c3a71ff7b6c862fb87",
   databaseURL: "https://buzachi-29b84-default-rtdb.europe-west1.firebasedatabase.app"
 };
+if(typeof firebase === 'undefined'){
+  document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#1A2332;color:#fff;font-family:sans-serif;padding:20px;text-align:center"><div><div style="font-size:48px;margin-bottom:16px">⚠️</div><div style="font-size:20px;font-weight:900;margin-bottom:8px">Нет подключения к интернету</div><div style="opacity:.7">Для работы приложения нужен интернет.<br>Проверьте соединение и обновите страницу.</div><br><button onclick="location.reload()" style="margin-top:16px;padding:12px 24px;background:#E85D04;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:900;cursor:pointer">🔄 Обновить</button></div></div>';
+  throw new Error('Firebase SDK not loaded');
+}
 firebase.initializeApp(firebaseConfig);
 const DB = firebase.database();
 const DB_REF = DB.ref('buzachi');
@@ -251,18 +265,25 @@ let _listeners = [];
 // Subscribe once on login, unsubscribe on logout
 function dbSubscribe() {
   const ref = DB_REF;
+  let firstLoad = true;
   const handler = ref.on('value', snap => {
     let val = snap.val();
-    if (!val) val = empty();
-    // merge missing keys
-    let e = empty();
-    Object.keys(e).forEach(k => { if (val[k] === undefined) val[k] = e[k]; });
-    if (!val.prices) val.prices = e.prices;
+    if (!val) {
+      // База пустая — только тогда заполняем структуру БЕЗ демо-данных
+      val = emptyClean();
+      DB_REF.set(val);
+    } else {
+      // База есть — только добавляем недостающие ключи, НЕ трогаем данные
+      let e = emptyClean();
+      Object.keys(e).forEach(k => {
+        if (val[k] === undefined) val[k] = e[k];
+      });
+    }
     _cache = val;
-    // re-render current tab if app is open
-    if (CU && activeTab) {
-      // Don't re-render marker page mid-session (would reset truck selection)
-      // Only re-render if not on marker tab, or if no session is active yet
+    if (firstLoad) {
+      firstLoad = false;
+      buildTabs();
+    } else if (CU && activeTab) {
       let skipRender = (activeTab === 'marker' && sessGet('mat') && sessGet('src'));
       if (!skipRender) render(activeTab);
     }
@@ -353,7 +374,7 @@ function doLogin(){
   // show loading indicator while Firebase connects
   document.getElementById('content').innerHTML='<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:32px;margin-bottom:12px">⏳</div><div style="font-weight:900">Подключение к базе данных...</div></div>';
   dbSubscribe();
-  buildTabs();
+  // buildTabs() вызывается из dbSubscribe() после первой загрузки данных
 }
 function logout(){
   dbUnsubscribe();
