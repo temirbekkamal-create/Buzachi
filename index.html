@@ -156,10 +156,6 @@ button,input,select,textarea{font-family:inherit;font-size:15px}
 }
 .print-only{display:none}
 </style>
-
-<!-- Firebase -->
-<script src="https://unpkg.com/firebase@9.23.0/compat/app/dist/index.js"></script>
-<script src="https://unpkg.com/firebase@9.23.0/compat/database/dist/index.js"></script>
 </head>
 <body>
 
@@ -168,16 +164,9 @@ button,input,select,textarea{font-family:inherit;font-size:15px}
     <div class="logo">Северное <span>Бузачи</span></div>
     <div class="sub">Учёт рейсов, складов, дизеля, ПП и расчётов</div>
     <div id="authErr" class="err hidden"></div>
-    <div class="field"><label>Логин</label><input id="login" value="admin" autocomplete="username"></div>
-    <div class="field"><label>Пароль</label><input id="pass" type="password" value="admin123" autocomplete="current-password"></div>
+    <div class="field"><label>Логин</label><input id="login" autocomplete="username" placeholder="Введите логин"></div>
+    <div class="field"><label>Пароль</label><input id="pass" type="password" autocomplete="current-password" placeholder="Введите пароль"></div>
     <button class="btn btn-main" onclick="doLogin()" type="button">Войти</button>
-    <div class="demo">
-      <button class="btn btn-ghost" onclick="quick('admin','admin123')" type="button">👑 Админ</button>
-      <button class="btn btn-ghost" onclick="quick('otmet1','otm123')" type="button">✅ Отметчик</button>
-      <button class="btn btn-ghost" onclick="quick('master1','mst123')" type="button">🏗️ Мастер</button>
-      <button class="btn btn-ghost" onclick="quick('prorab1','pro123')" type="button">✏️ Прораб</button>
-      <button class="btn btn-ghost" onclick="quick('fuel1','fuel123')" type="button">⛽ Заправщик</button>
-    </div>
   </div>
 </div>
 
@@ -196,15 +185,10 @@ button,input,select,textarea{font-family:inherit;font-size:15px}
 <div id="notice" class="notice"></div>
 
 <script>
-const KEY='sb_v21_data';
 const MAT_VOL={'Грунт':17,'ПГС':15};
-const USERS=[
-  {login:'admin',pass:'admin123',name:'Администратор',role:'admin'},
-  {login:'otmet1',pass:'otm123',name:'Отметчик',role:'otmet'},
-  {login:'master1',pass:'mst123',name:'Мастер',role:'master'},
-  {login:'prorab1',pass:'pro123',name:'Прораб',role:'prorab'},
-  {login:'fuel1',pass:'fuel123',name:'Заправщик',role:'fueler'}
-];
+const ROLE_NAMES={admin:'Админ',otmet:'Отметчик',master:'Мастер',prorab:'Прораб',fueler:'Заправщик'};
+// Default admin — always works even if Firebase is empty
+const DEFAULT_ADMIN={id:'admin',login:'admin',pass:'admin123',name:'Администратор',role:'admin'};
 let CU=null,activeTab='',selTruck='',calcMonth=new Date().toISOString().slice(0,7),clockTimer=null;
 
 function uid(){return Date.now()+'_'+Math.random().toString(36).slice(2,8)}
@@ -217,6 +201,7 @@ function dateTime(ts){return new Date(ts).toLocaleString('ru-RU')}
 // emptyClean — чистая структура без демо-данных (для Firebase)
 function emptyClean(){
   return {
+    users:[],
     contractors:[],trucks:[],objects:[],quarries:[],warehouses:[],
     routes:[],trips:[],periods:[],dieselIn:[],dieselOut:[],pp:[],
     marker:{},norms:[],spectech:[],hours:[],specFuel:[],truckDays:[],
@@ -235,78 +220,101 @@ function empty(){
     objects:[{id:'o1',name:'Площадка Б-12'},{id:'o2',name:'Площадка Б-15'}],
     quarries:[{id:'q1',name:'Карьер 1'},{id:'q2',name:'Карьер 2'}],
     warehouses:[{id:'w1',name:'Склад 1'},{id:'w2',name:'Склад 2'},{id:'w3',name:'Склад 3'}],
-    routes:[],trips:[],periods:[],dieselIn:[],dieselOut:[],pp:[],marker:{},norms:[],spectech:[],hours:[],specFuel:[],truckDays:[],
+    users:[],routes:[],trips:[],periods:[],dieselIn:[],dieselOut:[],pp:[],marker:{},norms:[],spectech:[],hours:[],specFuel:[],truckDays:[],
     prices:{transportRate:52,dieselPrice:275,ppPrice:6500}
   };
 }
 
-// ── Firebase config ──────────────────────────────────────────
-const firebaseConfig = {
-  apiKey: "AIzaSyBmVM-CxlOULrPu4eegvLpiUHEpkNKUwhg",
-  authDomain: "buzachi-29b84.firebaseapp.com",
-  projectId: "buzachi-29b84",
-  storageBucket: "buzachi-29b84.firebasestorage.app",
-  messagingSenderId: "385714399238",
-  appId: "1:385714399238:web:2832c3a71ff7b6c862fb87",
-  databaseURL: "https://buzachi-29b84-default-rtdb.europe-west1.firebasedatabase.app"
-};
-if(typeof firebase === 'undefined'){
-  document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#1A2332;color:#fff;font-family:sans-serif;padding:20px;text-align:center"><div><div style="font-size:48px;margin-bottom:16px">⚠️</div><div style="font-size:20px;font-weight:900;margin-bottom:8px">Нет подключения к интернету</div><div style="opacity:.7">Для работы приложения нужен интернет.<br>Проверьте соединение и обновите страницу.</div><br><button onclick="location.reload()" style="margin-top:16px;padding:12px 24px;background:#E85D04;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:900;cursor:pointer">🔄 Обновить</button></div></div>';
-  throw new Error('Firebase SDK not loaded');
-}
-firebase.initializeApp(firebaseConfig);
-const DB = firebase.database();
-const DB_REF = DB.ref('buzachi');
+// ── Firebase REST API (без SDK) ──────────────────────────────
+const FB_URL = 'https://buzachi-29b84-default-rtdb.europe-west1.firebasedatabase.app/buzachi.json';
 
-// Local cache — always up to date via listener
 let _cache = null;
-let _listeners = [];
+let _pollTimer = null;
+let _lastSaveTime = 0;
 
-// Subscribe once on login, unsubscribe on logout
-function dbSubscribe() {
-  const ref = DB_REF;
-  let firstLoad = true;
-  const handler = ref.on('value', snap => {
-    let val = snap.val();
-    if (!val) {
-      // База пустая — только тогда заполняем структуру БЕЗ демо-данных
-      val = emptyClean();
-      DB_REF.set(val);
-    } else {
-      // База есть — только добавляем недостающие ключи, НЕ трогаем данные
-      let e = emptyClean();
-      Object.keys(e).forEach(k => {
-        if (val[k] === undefined) val[k] = e[k];
-      });
-    }
-    _cache = val;
-    if (firstLoad) {
-      firstLoad = false;
-      buildTabs();
-    } else if (CU && activeTab) {
-      let skipRender = (activeTab === 'marker' && sessGet('mat') && sessGet('src'));
-      if (!skipRender) render(activeTab);
-    }
-  }, err => {
-    toast('Ошибка подключения к базе: ' + err.message, 'err');
-  });
-  _listeners.push({ref, handler});
+async function fbGet() {
+  try {
+    const r = await fetch(FB_URL);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } catch(e) { return null; }
 }
+
+async function fbSet(data) {
+  try {
+    const r = await fetch(FB_URL, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return true;
+  } catch(e) { return false; }
+}
+
+function mergeCache(val) {
+  if (!val) val = emptyClean();
+  let e = emptyClean();
+  Object.keys(e).forEach(k => { if (val[k] === undefined) val[k] = e[k]; });
+  return val;
+}
+
+function dbSubscribe() {
+  // Initial load
+  fbGet().then(val => {
+    val = mergeCache(val);
+    _cache = val;
+    buildTabs();
+    // If empty, save clean structure
+    if (!val.contractors || val.contractors.length === 0) {
+      fbSet(val);
+    }
+  }).catch(() => {
+    _cache = emptyClean();
+    buildTabs();
+    toast('Нет связи с базой данных', 'err');
+  });
+
+  // Poll every 8 seconds for updates from other devices
+  _pollTimer = setInterval(async () => {
+    if (!CU) return;
+    try {
+      const val = await fbGet();
+      if (!val) return;
+      const merged = mergeCache(val);
+      // Only update if data actually changed and we didn't just save
+      if (Date.now() - _lastSaveTime > 3000) {
+        const changed = JSON.stringify(merged) !== JSON.stringify(_cache);
+        if (changed) {
+          _cache = merged;
+          if (activeTab) {
+            let skip = (activeTab === 'marker' && sessGet('mat') && sessGet('src'));
+            if (!skip) render(activeTab);
+          }
+        }
+      }
+    } catch(e) {}
+  }, 8000);
+}
+
 function dbUnsubscribe() {
-  _listeners.forEach(l => l.ref.off('value', l.handler));
-  _listeners = [];
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
   _cache = null;
 }
 
 function load() {
-  return _cache || empty();
+  return _cache || emptyClean();
 }
 
 function save(d) {
   _cache = d;
+  _lastSaveTime = Date.now();
   const dot = document.getElementById('syncDot');
-  if(dot) dot.style.background='#FF9800';
-  DB_REF.set(d).then(()=>{if(dot)dot.style.background='#4CAF50'}).catch(err=>{if(dot)dot.style.background='#F44336';toast('Ошибка сохранения: '+err.message,'err')});
+  if (dot) dot.style.background = '#FF9800';
+  fbSet(d).then(ok => {
+    if (dot) dot.style.background = ok ? '#4CAF50' : '#F44336';
+    if (!ok) toast('Ошибка сохранения — проверьте интернет', 'err');
+  });
   return true;
 }
 function toast(msg,type){
@@ -357,22 +365,52 @@ function whBalance(d){
   return b;
 }
 
-function quick(l,p){document.getElementById('login').value=l;document.getElementById('pass').value=p;doLogin()}
 function doLogin(){
   let l=document.getElementById('login').value.trim(),
-      p=document.getElementById('pass').value,
-      u=USERS.find(x=>x.login===l&&x.pass===p);
-  if(!u){
-    document.getElementById('authErr').textContent='Неверный логин или пароль';
+      p=document.getElementById('pass').value;
+  if(!l||!p){
+    document.getElementById('authErr').textContent='Введите логин и пароль';
     document.getElementById('authErr').classList.remove('hidden');return;
   }
+  // Show loading
+  document.getElementById('authErr').classList.add('hidden');
+  document.querySelector('#auth .btn-main').textContent='Вход...';
+  document.querySelector('#auth .btn-main').disabled=true;
+
+  // First check default admin
+  if(l===DEFAULT_ADMIN.login && p===DEFAULT_ADMIN.pass){
+    finishLogin(DEFAULT_ADMIN); return;
+  }
+
+  // Load users from Firebase and check
+  fbGet().then(data=>{
+    const users=data&&data.users?data.users:[];
+    const u=users.find(x=>x.login===l&&x.pass===p&&x.active!==false);
+    if(!u){
+      document.getElementById('authErr').textContent='Неверный логин или пароль';
+      document.getElementById('authErr').classList.remove('hidden');
+      document.querySelector('#auth .btn-main').textContent='Войти';
+      document.querySelector('#auth .btn-main').disabled=false;
+      return;
+    }
+    finishLogin(u);
+  }).catch(()=>{
+    document.getElementById('authErr').textContent='Нет связи с сервером. Проверьте интернет.';
+    document.getElementById('authErr').classList.remove('hidden');
+    document.querySelector('#auth .btn-main').textContent='Войти';
+    document.querySelector('#auth .btn-main').disabled=false;
+  });
+}
+
+function finishLogin(u){
   CU=u;
+  document.querySelector('#auth .btn-main').textContent='Войти';
+  document.querySelector('#auth .btn-main').disabled=false;
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='block';
   document.getElementById('userName').textContent=u.name;
-  document.getElementById('userRole').textContent={admin:'Админ',otmet:'Отметчик',master:'Мастер',prorab:'Прораб',fueler:'Заправщик'}[u.role];
-  // show loading indicator while Firebase connects
-  document.getElementById('content').innerHTML='<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:32px;margin-bottom:12px">⏳</div><div style="font-weight:900">Подключение к базе данных...</div></div>';
+  document.getElementById('userRole').textContent=ROLE_NAMES[u.role]||u.role;
+  document.getElementById('content').innerHTML='<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:32px;margin-bottom:12px">⏳</div><div style="font-weight:900">Загрузка данных...</div></div>';
   dbSubscribe();
   // buildTabs() вызывается из dbSubscribe() после первой загрузки данных
 }
@@ -385,7 +423,7 @@ function logout(){
 }
 
 const TABS={
-  admin:[['dash','📊 Дашборд'],['money','💰 Расчёты'],['trips','📋 Рейсы'],['norms','📐 Нормы'],['warehouses','🏚 Склады'],['dieselAdmin','⛽ Дизель'],['trucks','🚛 Самосвалы'],['spectech','🚜 Спецтехника'],['contractors','🤝 Подрядчики'],['objects','📍 Объекты'],['quarries','⛰ Карьеры'],['routes','🛣 Маршруты'],['status','🛠 Статус'],['ppReport','🍽 ПП'],['print','🖨️ Печать']],
+  admin:[['dash','📊 Дашборд'],['money','💰 Расчёты'],['trips','📋 Рейсы'],['norms','📐 Нормы'],['warehouses','🏚 Склады'],['dieselAdmin','⛽ Дизель'],['trucks','🚛 Самосвалы'],['spectech','🚜 Спецтехника'],['contractors','🤝 Подрядчики'],['objects','📍 Объекты'],['quarries','⛰ Карьеры'],['routes','🛣 Маршруты'],['status','🛠 Статус'],['ppReport','🍽 ПП'],['users','👥 Пользователи'],['print','🖨️ Печать']],
   otmet:[['marker','✅ Отметить'],['today','📋 Сводка']],
   master:[['marker','🏗 Отметить'],['specHours','⏱ Часы'],['status','🛠 Статус'],['warehouses','🏚 Склады'],['today','📋 Сводка']],
   prorab:[['marker','✏️ Отметить'],['norms','📐 Нормы'],['specHours','⏱ Часы'],['status','🛠 Статус'],['pp','🍽 ПП'],['today','📋 Сводка'],['trips','📋 Рейсы']],
@@ -404,7 +442,7 @@ function goTab(id){
   render(id);
 }
 function render(id){
-  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,print:pagePrint};
+  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,print:pagePrint};
   document.getElementById('content').innerHTML=(map[id]||pageDash)();
   if(id==='marker')startClock();
 }
@@ -481,12 +519,83 @@ function sessGet(k){try{return localStorage.getItem(mKey(k))||''}catch(e){return
 function sessSet(k,v){try{localStorage.setItem(mKey(k),v)}catch(e){}}
 function sessClear(){['mat','src'].forEach(k=>{try{localStorage.removeItem(mKey(k))}catch(e){}})}
 
+
+function setWorkMode(m){
+  // m = 'obj' or 'wh'
+  localStorage.setItem('wmode_'+CU.login, m);
+  localStorage.setItem('mmode_'+CU.login, '1');
+  render(activeTab);
+}
+function resetWorkMode(){
+  localStorage.removeItem('wmode_'+CU.login);
+  localStorage.removeItem('mmode_'+CU.login);
+  sessClear();
+  render(activeTab);
+}
+
+function pageMarkerWarehouse(d){
+  let optsT=d.trucks.filter(t=>t.status==='line').map(t=>'<option value="'+t.id+'">'+esc(t.plate)+' — '+esc(t.driver)+'</option>').join('');
+  let qOpts=d.quarries.map(q=>'<option value="'+q.id+'">'+esc(q.name)+'</option>').join('');
+  let whOpts=d.warehouses.map(w=>'<option value="'+w.id+'">'+esc(w.name)+'</option>').join('');
+  let b=whBalance(d);
+  let whRows=d.warehouses.map(w=>'<tr><td><b>'+esc(w.name)+'</b></td><td class="num good">'+fmt(b[w.id]['Грунт'].rest)+'</td><td class="num good">'+fmt(b[w.id]['ПГС'].rest)+'</td></tr>').join('');
+  return '<div class="panel"><div class="pb" style="display:flex;justify-content:space-between;align-items:center;gap:10px">'
+    +'<div><div class="small">Режим работы</div><div style="font-weight:900;font-size:16px">🏚 Склад</div></div>'
+    +'<button class="btn btn-ghost btn-sm" onclick="resetWorkMode()">← Сменить</button>'
+    +'</div></div>'
+    +'<div class="panel"><div class="ph"><div class="pt">Записать приход на склад</div></div><div class="pb">'
+    +'<div class="grid">'
+    +'<div class="field"><label>Карьер (откуда)</label><select id="mwQuarry">'+qOpts+'</select></div>'
+    +'<div class="field"><label>Склад (куда)</label><select id="mwWh">'+whOpts+'</select></div>'
+    +'<div class="field"><label>Самосвал</label><select id="mwTruck">'+optsT+'</select></div>'
+    +'<div class="field"><label>Материал</label><select id="mwMat"><option value="Грунт">🪨 Грунт (17 м³)</option><option value="ПГС">🏗️ ПГС (15 м³)</option></select></div>'
+    +'</div>'
+    +'<button class="btn btn-green" style="width:100%;padding:14px;margin-top:8px;font-size:16px" onclick="markerWhTrip()">✓ Отметить рейс на склад</button>'
+    +'</div></div>'
+    +'<div class="panel"><div class="ph"><div class="pt">Остатки складов</div></div>'
+    +tbl('<table class="tbl"><thead><tr><th>Склад</th><th>Грунт</th><th>ПГС</th></tr></thead><tbody>'+whRows+'</tbody></table>')
+    +'</div>';
+}
+function markerWhTrip(){
+  let d=load();
+  let trEl=document.getElementById('mwTruck'),tr=trEl?get(d.trucks,trEl.value):null;
+  let q=document.getElementById('mwQuarry').value;
+  let w=document.getElementById('mwWh').value;
+  let mat=document.getElementById('mwMat').value;
+  if(!tr)return toast('Выберите самосвал','err');
+  let rt=ensureRoute(d,'quarry',q,'warehouse',w);
+  d.trips.push({id:uid(),ts:Date.now(),date:today(),truckId:tr.id,plate:tr.plate,driver:tr.driver,contractorId:tr.contractorId,material:mat,m3:MAT_VOL[mat],fromType:'quarry',fromId:q,toType:'warehouse',toId:w,routeKey:rt.key,by:CU.login});
+  if(save(d)){toast('Рейс на склад записан ✓ — '+tr.plate);render(activeTab)}
+}
+
 function pageMarker(){
-  let d=load(),key='object_'+CU.login,fixed=d.marker[key];
+  let d=load();
+  // Work mode: 'object' or 'warehouse'
+  let wmode=localStorage.getItem('wmode_'+CU.login)||'obj';
+
+  // Step 0: choose work mode
+  let modeKey='mmode_'+CU.login;
+  if(!localStorage.getItem(modeKey)){
+    return '<div class="title">Где работаете?</div><div class="hint">Выберите режим работы на сегодня</div>'
+      +'<div class="matgrid" style="margin-top:8px">'
+      +'<button class="mat" onclick="setWorkMode(&apos;obj&apos;)" style="padding:20px;font-size:16px">📍 Площадка<br><span class="small">Отметка рейсов на объект</span></button>'
+      +'<button class="mat" onclick="setWorkMode(&apos;wh&apos;)" style="padding:20px;font-size:16px">🏚 Склад<br><span class="small">Приход на склад</span></button>'
+      +'</div>';
+  }
+
+  wmode=localStorage.getItem('wmode_'+CU.login)||'obj';
+
+  // Warehouse mode
+  if(wmode==='wh'){
+    return pageMarkerWarehouse(d);
+  }
+
+  let key='object_'+CU.login,fixed=d.marker[key];
 
   if(!fixed||!get(d.objects,fixed)){
     let opts=d.objects.map(o=>'<option value="'+o.id+'">'+esc(o.name)+'</option>').join('');
     return '<div class="title">Шаг 1 — Выберите объект</div><div class="hint">Выберите площадку на которой работаете сегодня.</div>'
+      +'<button class="btn btn-ghost btn-sm" style="margin-bottom:10px" onclick="resetWorkMode()">← Сменить режим</button>'
       +'<div class="panel"><div class="pb"><div class="field"><label>Площадка</label><select id="fixedObj">'+opts+'</select></div>'
       +'<button class="btn btn-green" style="width:100%;margin-top:4px" onclick="saveFixedObject()">Закрепить объект →</button></div></div>';
   }
@@ -577,7 +686,7 @@ function saveFixedObject(){
   if(save(d)){toast('Объект закреплён');render(activeTab)}
 }
 function changeFixedObject(){
-  if(!confirm('Сменить объект?'))return;
+  if(!confirm('Сменить объект или режим работы?'))return;
   let d=load();d.marker['object_'+CU.login]='';sessClear();
   if(save(d))render(activeTab);
 }
@@ -871,470 +980,4 @@ function pageNorms(){
     +'</div>'
     +'<div id="roadFields" class="hidden">'
     +'<div class="grid">'
-    +'<div class="field"><label>Длина дороги (м)</label><input id="nRoadL" type="number" step="0.01" placeholder="200" oninput="calcNormPreview()"></div>'
-    +'<div class="field"><label>Ширина дороги (м)</label><input id="nRoadW" type="number" step="0.01" placeholder="8" oninput="calcNormPreview()"></div>'
-    +'<div class="field"><label>Кол-во радиусов R=20м</label><input id="nR20" type="number" value="0" min="0" oninput="calcNormPreview()"></div>'
-    +'<div class="field"><label>Кол-во радиусов R=30м</label><input id="nR30" type="number" value="0" min="0" oninput="calcNormPreview()"></div>'
-    +'</div>'
-    +'<div id="roadPreview" style="font-size:13px;color:var(--blue)"></div>'
-    +'</div>'
-    +'</div>'
-    +'<div id="normTotal" style="background:var(--dark);color:#fff;border-radius:10px;padding:12px;margin-bottom:12px;display:none">'
-    +'</div>'
-    +'<button class="btn btn-green" style="width:100%;padding:14px;font-size:16px" onclick="saveNorm()">💾 Сохранить норму</button>'
-    +'</div></div>';
-
-  return '<div class="title">📐 Нормы объёмов</div>'
-    +'<div class="hint">Расчёт грунта и ПГС по площадкам и дорогам с учётом откоса '+SLOPE+' м с каждой стороны</div>'
-    +cards+form;
-}
-
-function calcNormPreview(){
-  let L=+document.getElementById('nPadL')?.value||0;
-  let W=+document.getElementById('nPadW')?.value||0;
-  let gH=+document.getElementById('nGruntH')?.value||GRUNT_H;
-  let pH=+document.getElementById('nPgsH')?.value||PGS_H;
-  let hasCb=document.getElementById('nHasRoad');
-  let hasRoad=hasCb&&hasCb.checked;
-  let rf=document.getElementById('roadFields');
-  if(rf)rf.classList.toggle('hidden',!hasRoad);
-
-  let padPrev=document.getElementById('padPreview');
-  let roadPrev=document.getElementById('roadPreview');
-  let totalDiv=document.getElementById('normTotal');
-
-  let padG=0,padP=0,padArea=0,Le=0,We=0;
-  if(L>0&&W>0){
-    let p=calcPad(L,W);Le=p.Le;We=p.We;padArea=p.area;
-    padG=padArea*gH; padP=padArea*pH;
-    if(padPrev)padPrev.innerHTML='С откосом: <b>'+fmt(Le)+'×'+fmt(We)+' = '+fmt(padArea)+' м²</b>'
-      +' → Грунт: <b>'+fmt(padG)+' м³</b>, ПГС: <b>'+fmt(padP)+' м³</b>';
-  } else {if(padPrev)padPrev.innerHTML=''}
-
-  let roadG=0,roadP=0,roadArea=0;
-  if(hasRoad){
-    let rL=+document.getElementById('nRoadL')?.value||0;
-    let rW=+document.getElementById('nRoadW')?.value||0;
-    let r20=+document.getElementById('nR20')?.value||0;
-    let r30=+document.getElementById('nR30')?.value||0;
-    if(rL>0&&rW>0){
-      let r=calcRoad(rL,rW,r20,r30);
-      roadArea=r.area; roadG=roadArea*gH; roadP=roadArea*pH;
-      if(roadPrev)roadPrev.innerHTML='Площадь с откосом: <b>'+fmt(roadArea)+' м²</b>'
-        +' → Грунт: <b>'+fmt(roadG)+' м³</b>, ПГС: <b>'+fmt(roadP)+' м³</b>';
-    } else {if(roadPrev)roadPrev.innerHTML=''}
-  } else {if(roadPrev)roadPrev.innerHTML=''}
-
-  let totalG=padG+roadG, totalP=padP+roadP;
-  if(totalDiv){
-    if(totalG>0||totalP>0){
-      totalDiv.style.display='block';
-      totalDiv.innerHTML='<div style="font-weight:900;margin-bottom:6px">📊 Итого по объекту:</div>'
-        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
-        +'<div style="background:rgba(255,255,255,.15);border-radius:8px;padding:10px"><div class="small">🪨 Грунт</div><div style="font-size:18px;font-weight:900">'+fmt(totalG)+' м³</div></div>'
-        +'<div style="background:rgba(255,255,255,.15);border-radius:8px;padding:10px"><div class="small">🏗️ ПГС</div><div style="font-size:18px;font-weight:900">'+fmt(totalP)+' м³</div></div>'
-        +'</div>';
-    } else { totalDiv.style.display='none' }
-  }
-}
-
-function saveNorm(){
-  let d=load();if(!d.norms)d.norms=[];
-  let objId=document.getElementById('normObj').value;
-  let L=+document.getElementById('nPadL').value||0;
-  let W=+document.getElementById('nPadW').value||0;
-  let gH=+document.getElementById('nGruntH').value||GRUNT_H;
-  let pH=+document.getElementById('nPgsH').value||PGS_H;
-  if(!objId)return toast('Выберите объект','err');
-  if(L<=0||W<=0)return toast('Введите длину и ширину площадки','err');
-  let pad=calcPad(L,W);
-  let padGrunt=pad.area*gH, padPgs=pad.area*pH;
-  let hasRoad=document.getElementById('nHasRoad').checked;
-  let roadGrunt=0,roadPgs=0,roadArea=0,roadL=0,roadW=0,roadR20=0,roadR30=0;
-  if(hasRoad){
-    roadL=+document.getElementById('nRoadL').value||0;
-    roadW=+document.getElementById('nRoadW').value||0;
-    roadR20=+document.getElementById('nR20').value||0;
-    roadR30=+document.getElementById('nR30').value||0;
-    if(roadL>0&&roadW>0){
-      let r=calcRoad(roadL,roadW,roadR20,roadR30);
-      roadArea=r.area;roadGrunt=roadArea*gH;roadPgs=roadArea*pH;
-    }
-  }
-  // remove existing for this object
-  d.norms=d.norms.filter(n=>n.objectId!==objId);
-  d.norms.push({id:uid(),objectId:objId,
-    padL:L,padW:W,gH,pH,padLe:pad.Le,padWe:pad.We,padArea:pad.area,
-    padGrunt,padPgs,
-    hasRoad,roadL,roadW,roadR20,roadR30,roadArea,roadGrunt,roadPgs
-  });
-  if(save(d)){toast('Норма сохранена');render(activeTab)}
-}
-
-function delNorm(id){
-  if(!confirm('Удалить норму?'))return;
-  let d=load();d.norms=d.norms.filter(n=>n.id!==id);
-  if(save(d)){toast('Удалено');render(activeTab)}
-}
-
-function editNorm(id){
-  let d=load(),n=get(d.norms,id);if(!n)return;
-  // scroll to form and fill it
-  document.getElementById('normObj').value=n.objectId;
-  document.getElementById('nPadL').value=n.padL;
-  document.getElementById('nPadW').value=n.padW;
-  document.getElementById('nGruntH').value=n.gH||GRUNT_H;
-  document.getElementById('nPgsH').value=n.pH||PGS_H;
-  let cb=document.getElementById('nHasRoad');
-  cb.checked=!!n.hasRoad;
-  let rf=document.getElementById('roadFields');
-  if(rf)rf.classList.toggle('hidden',!n.hasRoad);
-  if(n.hasRoad){
-    document.getElementById('nRoadL').value=n.roadL||'';
-    document.getElementById('nRoadW').value=n.roadW||'';
-    document.getElementById('nR20').value=n.roadR20||0;
-    document.getElementById('nR30').value=n.roadR30||0;
-  }
-  calcNormPreview();
-  document.getElementById('normObj').scrollIntoView({behavior:'smooth',block:'center'});
-}
-
-
-/* ======== SPECTECH ======== */
-function pageSpectech(){
-  let d=load();
-  if(!d.spectech)d.spectech=[];
-  let cOpts=d.contractors.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('');
-  let rows=d.spectech.map(s=>'<tr><td><b>'+esc(s.name)+'</b></td><td>'+esc(s.driver)+'</td><td>'+esc(contractor(d,s.contractorId))+'</td><td><span class="badge '+(s.status==='line'?'b-green':'b-red')+'">'+(s.status==='line'?'Работает':'Ремонт')+'</span></td><td><button class="btn btn-red btn-sm" onclick="rmSpectech(\''+s.id+'\')">✕</button></td></tr>').join('')||'<tr><td colspan="5"><div class="empty">Нет спецтехники</div></td></tr>';
-  return '<div class="title">Спецтехника</div><div class="hint">Экскаваторы, бульдозеры, грейдеры и т.д.</div>'
-    +'<div class="panel"><div class="ph"><div class="pt">Добавить</div></div><div class="pb"><div class="grid">'
-    +'<div class="field"><label>Название / номер</label><input id="stName" placeholder="Экскаватор CAT 320"></div>'
-    +'<div class="field"><label>Оператор / водитель</label><input id="stDriver" placeholder="Иванов А.А."></div>'
-    +'<div class="field"><label>Подрядчик</label><select id="stContr">'+cOpts+'</select></div>'
-    +'</div><button class="btn btn-green" onclick="addSpectech()">Добавить спецтехнику</button></div></div>'
-    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Техника</th><th>Оператор</th><th>Подрядчик</th><th>Статус</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
-}
-function addSpectech(){
-  let d=load();if(!d.spectech)d.spectech=[];
-  let name=document.getElementById('stName').value.trim(),driver=document.getElementById('stDriver').value.trim(),contractorId=document.getElementById('stContr').value;
-  if(!name)return toast('Введите название','err');
-  if(!driver)return toast('Введите оператора','err');
-  d.spectech.push({id:uid(),name,driver,contractorId,status:'line'});
-  if(save(d)){toast('Добавлено');render(activeTab)}
-}
-function rmSpectech(id){if(!confirm('Удалить?'))return;let d=load();d.spectech=d.spectech.filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
-
-/* ======== SPEC HOURS ======== */
-function statusBadge(s){
-  return {work:'<span class="badge b-green">Работа</span>',repair:'<span class="badge b-red">Ремонт</span>',rain:'<span class="badge b-blue">Дождь</span>'}[s]||s;
-}
-function truckStatusBadge(s){
-  return {work:'<span class="badge b-green">Работа</span>',repair:'<span class="badge b-red">Ремонт</span>',rain:'<span class="badge b-blue">Дождь</span>'}[s]||s;
-}
-
-function pageSpecHours(){
-  let d=load();
-  if(!d.spectech)d.spectech=[];
-  if(!d.hours)d.hours=[];
-  if(!d.truckDays)d.truckDays=[];
-  let isEdit=CU.role==='prorab'||CU.role==='master'||CU.role==='admin';
-  let stOpts=d.spectech.map(s=>'<option value="'+s.id+'">'+esc(s.name)+' — '+esc(s.driver)+'</option>').join('');
-  if(!stOpts)return '<div class="title">Учёт часов</div><div class="empty" style="margin-top:30px">Сначала добавьте спецтехнику (Админ → Спецтехника)</div>';
-
-  let rows=d.hours.slice().reverse().map(h=>{
-    let st=get(d.spectech,h.stId);
-    let editBtn=isEdit?'<button class="btn btn-ghost btn-sm" onclick="openEditHours(\'' + h.id + '\')">✏️</button> <button class="btn btn-red btn-sm" onclick="delHours(\'' + h.id + '\')">✕</button>':'';
-    return '<tr><td>'+esc(h.date)+'</td>'
-      +'<td><b>'+esc(st?st.name:'?')+'</b><div class="small">'+esc(st?st.driver:'')+'</div></td>'
-      +'<td class="num">'+fmt(h.hours)+' ч</td>'
-      +'<td>'+statusBadge(h.status)+'</td>'
-      +'<td class="hide-mob">'+esc(h.comment||'—')+'</td>'
-      +'<td>'+editBtn+'</td></tr>';
-  }).join('')||'<tr><td colspan="6"><div class="empty">Записей нет</div></td></tr>';
-
-  let trows=d.truckDays.slice().reverse().map(r=>{
-    let delBtn=isEdit?'<button class="btn btn-red btn-sm" onclick="delTruckDay(\'' + r.id + '\')">✕</button>':'';
-    return '<tr><td>'+esc(r.date)+'</td>'
-      +'<td><b class="plate">'+esc(r.plate)+'</b><div class="small">'+esc(r.driver)+'</div></td>'
-      +'<td>'+truckStatusBadge(r.status)+'</td>'
-      +'<td class="hide-mob">'+esc(r.comment||'—')+'</td>'
-      +'<td>'+delBtn+'</td></tr>';
-  }).join('')||'<tr><td colspan="5"><div class="empty">Простоев нет</div></td></tr>';
-
-  let rainBlock=isEdit?('<div class="panel" style="border-left:4px solid var(--blue)"><div class="ph"><div class="pt">🌧️ Дождь — отметить всем самосвалам</div></div><div class="pb">'
-    +'<div class="hint">Один клик — дождь записывается всем самосвалам на выбранную дату</div>'
-    +'<div class="field" style="max-width:240px"><label>Дата</label><input id="rainDate" type="date" value="'+today()+'"></div>'
-    +'<button class="btn btn-blue" style="margin-top:6px" onclick="markRainAllTrucks()">🌧️ Отметить дождь всем</button>'
-    +'</div></div>'):'';
-
-  return '<div class="title">⏱ Учёт часов и простоев</div>'
-    +'<div class="panel"><div class="ph"><div class="pt">🚜 Часы спецтехники</div></div><div class="pb">'
-    +'<div class="hint">Часы от 0 до 24. Можно ставить несколько записей за день — например 5ч работа + ремонт.</div>'
-    +'<div class="grid">'
-    +'<div class="field"><label>Дата</label><input id="hDate" type="date" value="'+today()+'"></div>'
-    +'<div class="field"><label>Техника</label><select id="hSt">'+stOpts+'</select></div>'
-    +'<div class="field"><label>Часов (0–24)</label><input id="hHours" type="number" step="0.5" min="0" max="24" placeholder="8"></div>'
-    +'<div class="field"><label>Статус</label>'
-    +'<select id="hStatus">'
-    +'<option value="work">✅ Работа</option>'
-    +'<option value="repair">🔧 Ремонт</option>'
-    +'<option value="rain">🌧️ Дождь</option>'
-    +'</select></div>'
-    +'<div class="field"><label>Комментарий</label><input id="hComment" placeholder="Необязательно"></div>'
-    +'</div>'
-    +'<button class="btn btn-green" style="margin-top:6px" onclick="addHours()">Добавить запись</button>'
-    +'</div></div>'
-    +'<div class="panel"><div class="ph"><div class="pt">Журнал часов спецтехники</div></div>'
-    +tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Техника</th><th>Часов</th><th>Статус</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')
-    +'</div>'
-    +rainBlock
-    +'<div class="panel"><div class="ph"><div class="pt">🚛 Простои самосвалов</div></div>'
-    +tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Самосвал</th><th>Статус</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+trows+'</tbody></table>')
-    +'</div>';
-}
-
-function addHours(){
-  let d=load();if(!d.hours)d.hours=[];
-  let stId=document.getElementById('hSt').value,
-      hours=parseFloat(document.getElementById('hHours').value),
-      date=document.getElementById('hDate').value||today(),
-      status=document.getElementById('hStatus').value,
-      comment=document.getElementById('hComment').value.trim();
-  if(!stId)return toast('Выберите технику','err');
-  if(isNaN(hours)||hours<0||hours>24)return toast('Часы: от 0 до 24','err');
-  d.hours.push({id:uid(),ts:Date.now(),date,stId,hours,status,comment,by:CU.login});
-  if(save(d)){toast('Записано — '+{work:'Работа',repair:'Ремонт',rain:'Дождь'}[status]+' '+hours+'ч');render(activeTab)}
-}
-function openEditHours(id){
-  let d=load(),h=get(d.hours,id);if(!h)return;
-  let nh=prompt('Часов (0–24), было '+h.hours+':',h.hours);
-  if(nh===null)return;
-  let v=parseFloat(nh);if(isNaN(v)||v<0||v>24)return toast('Неверное значение','err');
-  h.hours=v;h.editBy=CU.login;h.editTs=Date.now();
-  if(save(d)){toast('Изменено');render(activeTab)}
-}
-function delHours(id){if(!confirm('Удалить?'))return;let d=load();d.hours=d.hours.filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
-function markRainAllTrucks(){
-  let d=load();if(!d.truckDays)d.truckDays=[];
-  let date=document.getElementById('rainDate').value||today();
-  let added=0;
-  d.trucks.forEach(t=>{
-    if(d.truckDays.some(r=>r.truckId===t.id&&r.date===date))return;
-    d.truckDays.push({id:uid(),ts:Date.now(),date,truckId:t.id,plate:t.plate,driver:t.driver,contractorId:t.contractorId,status:'rain',comment:'Дождь',by:CU.login});
-    added++;
-  });
-  if(!added)return toast('На эту дату уже есть записи для всех самосвалов','err');
-  if(save(d)){toast('Дождь отмечен для '+added+' самосвалов');render(activeTab)}
-}
-function delTruckDay(id){if(!confirm('Удалить?'))return;let d=load();d.truckDays=(d.truckDays||[]).filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
-
-/* ======== SPEC FUEL ======== */
-function pageSpecFuelIssue(){
-  let d=load();
-  if(!d.spectech)d.spectech=[];if(!d.specFuel)d.specFuel=[];
-  let stOpts=d.spectech.map(s=>'<option value="'+s.id+'">'+esc(s.name)+' — '+esc(s.driver)+'</option>').join('');
-  if(!stOpts)return '<div class="title">Заправка спецтехники</div><div class="empty" style="margin-top:30px">Спецтехника не добавлена</div>';
-  let canEdit=CU.role==='admin'||CU.role==='prorab'||CU.role==='master';
-  let rows=d.specFuel.slice().reverse().map(f=>{
-    let st=get(d.spectech,f.stId);
-    let editBtn=canEdit?'<button class="btn btn-ghost btn-sm" onclick="editSpecFuel(\''+f.id+'\')">✏️</button> <button class="btn btn-red btn-sm" onclick="delSpecFuel(\''+f.id+'\')">✕</button>':'';
-    return '<tr><td>'+dateTime(f.ts)+'</td><td><b>'+esc(st?st.name:'?')+'</b></td><td class="num bad">'+fmt(f.liters)+' л</td><td class="hide-mob">'+esc(f.comment||'—')+'</td><td>'+editBtn+'</td></tr>';
-  }).join('')||'<tr><td colspan="5"><div class="empty">Выдач нет</div></td></tr>';
-  return '<div class="title">⛽ Заправка спецтехники</div><div class="hint">Остаток дизеля: <b>'+fmt(dieselRest(d))+' л</b></div>'
-    +'<div class="panel"><div class="pb"><div class="grid">'
-    +'<div class="field"><label>Техника</label><select id="sfSt">'+stOpts+'</select></div>'
-    +'<div class="field"><label>Литры</label><input id="sfLit" type="number" placeholder="100"></div>'
-    +'<div class="field"><label>Комментарий</label><input id="sfComment" placeholder="Необязательно"></div>'
-    +'</div><button class="btn btn-green" onclick="addSpecFuel()">Записать заправку</button></div></div>'
-    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Время</th><th>Техника</th><th>Литры</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
-}
-function addSpecFuel(){
-  let d=load();if(!d.specFuel)d.specFuel=[];
-  let stId=document.getElementById('sfSt').value,lit=+document.getElementById('sfLit').value||0,comment=document.getElementById('sfComment').value.trim();
-  if(!stId)return toast('Выберите технику','err');
-  if(lit<=0)return toast('Введите литры','err');
-  if(lit>dieselRest(d))return toast('Недостаточно дизеля. Остаток: '+fmt(dieselRest(d))+' л','err');
-  d.specFuel.push({id:uid(),ts:Date.now(),date:today(),stId,liters:lit,comment,by:CU.login});
-  if(save(d)){toast('Заправка записана');render(activeTab)}
-}
-function editSpecFuel(id){
-  let d=load(),f=get(d.specFuel,id);if(!f)return;
-  let nv=prompt('Изменить литры (было '+f.liters+'):',f.liters);
-  if(nv===null)return;
-  let v=+nv;if(v<=0)return toast('Неверное значение','err');
-  f.liters=v;f.editBy=CU.login;f.editTs=Date.now();
-  if(save(d)){toast('Изменено');render(activeTab)}
-}
-function delSpecFuel(id){if(!confirm('Удалить?'))return;let d=load();d.specFuel=d.specFuel.filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
-
-/* ======== PRINT PAGE ======== */
-function pagePrint(){
-  let d=load();
-  let mOpts='<option value="">— все месяцы —</option>';
-  let months={};
-  d.trips.forEach(t=>months[t.date.slice(0,7)]=1);
-  d.hours.forEach(h=>months[h.date.slice(0,7)]=1);
-  d.specFuel.forEach(f=>months[f.date.slice(0,7)]=1);
-  d.pp.forEach(p=>months[p.date.slice(0,7)]=1);
-  Object.keys(months).sort().reverse().forEach(m=>{mOpts+='<option value="'+m+'">'+m+'</option>'});
-  return '<div class="title no-print">🖨️ Печать документов</div>'
-    +'<div class="hint no-print">Выберите что распечатать. Цены не отображаются.</div>'
-    +'<div class="panel no-print"><div class="pb" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'
-    +'<div class="field" style="flex:1;min-width:160px"><label>Месяц</label><select id="pMonth" onchange="renderPrintPreview()">'+mOpts+'</select></div>'
-    +'<div class="field" style="flex:2;min-width:200px"><label>Документ</label>'
-    +'<select id="pDoc" onchange="renderPrintPreview()">'
-    +'<option value="trips_by_truck">Рейсы по самосвалам</option>'
-    +'<option value="fuel_by_truck">ГСМ самосвалов</option>'
-    +'<option value="pp_list">Питание и проживание (ПП)</option>'
-    +'<option value="spec_hours">Часы + простои</option>'
-    +'<option value="spec_fuel">ГСМ спецтехники</option>'
-    +'</select></div>'
-    +'<button class="btn btn-blue" onclick="window.print()" style="white-space:nowrap">🖨️ Печатать</button>'
-    +'</div></div>'
-    +'<div id="printArea"></div>';
-}
-
-function renderPrintPreview(){
-  let d=load(),doc=document.getElementById('pDoc')?.value,month=document.getElementById('pMonth')?.value;
-  let area=document.getElementById('printArea');if(!area)return;
-  let mLabel=month||'все месяцы';
-  let html='';
-
-  if(doc==='trips_by_truck'){
-    let trucks={};
-    d.trips.filter(t=>!month||t.date.slice(0,7)===month).forEach(t=>{
-      if(!trucks[t.truckId])trucks[t.truckId]={plate:t.plate,driver:t.driver,contr:contractor(d,t.contractorId),trips:[]};
-      trucks[t.truckId].trips.push(t);
-    });
-    html='<div class="print-only" style="margin-bottom:8px;font-size:11px">Рейсы самосвалов — '+esc(mLabel)+'</div>';
-    if(!Object.keys(trucks).length){html+='<div class="empty">Нет рейсов</div>';}
-    Object.values(trucks).forEach(tr=>{
-      let rows=tr.trips.map(t=>'<tr><td>'+esc(t.date)+'</td><td>'+time(t.ts)+'</td>'
-        +'<td><span class="badge '+(t.material==='Грунт'?'b-orange':'b-blue')+'">'+t.material+'</span></td>'
-        +'<td class="num">'+fmt(t.m3)+' м³</td>'
-        +'<td>'+esc(ent(d,t.fromType,t.fromId))+' → '+esc(ent(d,t.toType,t.toId))+'</td></tr>').join('');
-      let totalM=tr.trips.reduce((s,t)=>s+(+t.m3||0),0);
-      html+='<div class="panel" style="margin-bottom:16px;page-break-inside:avoid">'
-        +'<div class="ph"><div class="pt">🚛 '+esc(tr.plate)+' — '+esc(tr.driver)+'</div><div class="small">'+esc(tr.contr)+'</div></div>'
-        +tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Время</th><th>Материал</th><th>м³</th><th>Маршрут</th></tr></thead><tbody>'+rows+'</tbody>'
-          +'<tfoot><tr style="background:var(--bg)"><td colspan="3"><b>Итого рейсов: '+tr.trips.length+'</b></td><td class="num"><b>'+fmt(totalM)+' м³</b></td><td></td></tr></tfoot>'
-          +'</table>')
-        +'</div>';
-    });
-  }
-
-  else if(doc==='fuel_by_truck'){
-    let trucks={};
-    d.dieselOut.filter(f=>!month||f.date.slice(0,7)===month).forEach(f=>{
-      if(!trucks[f.truckId])trucks[f.truckId]={plate:f.plate,driver:f.driver,contr:contractor(d,f.contractorId),items:[]};
-      trucks[f.truckId].items.push(f);
-    });
-    html='<div class="print-only" style="margin-bottom:8px;font-size:11px">ГСМ самосвалов — '+esc(mLabel)+'</div>';
-    if(!Object.keys(trucks).length){html+='<div class="empty">Нет данных</div>';}
-    Object.values(trucks).forEach(tr=>{
-      let rows=tr.items.map(f=>'<tr><td>'+esc(f.date)+'</td><td>'+time(f.ts)+'</td><td class="num">'+fmt(f.liters)+' л</td><td class="hide-mob">'+esc(f.comment||'—')+'</td></tr>').join('');
-      let total=tr.items.reduce((s,f)=>s+(+f.liters||0),0);
-      html+='<div class="panel" style="margin-bottom:16px;page-break-inside:avoid">'
-        +'<div class="ph"><div class="pt">🚛 '+esc(tr.plate)+' — '+esc(tr.driver)+'</div><div class="small">'+esc(tr.contr)+'</div></div>'
-        +tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Время</th><th>Литры</th><th class="hide-mob">Комментарий</th></tr></thead><tbody>'+rows+'</tbody>'
-          +'<tfoot><tr style="background:var(--bg)"><td colspan="2"><b>Итого</b></td><td class="num"><b>'+fmt(total)+' л</b></td><td></td></tr></tfoot>'
-          +'</table>')
-        +'</div>';
-    });
-  }
-
-  else if(doc==='pp_list'){
-    let items=d.pp.filter(p=>!month||p.date.slice(0,7)===month).sort((a,b)=>a.date.localeCompare(b.date));
-    html='<div class="print-only" style="margin-bottom:8px;font-size:11px">Питание и проживание (ПП) — '+esc(mLabel)+'</div>';
-    let byTruck={};
-    items.forEach(p=>{
-      if(!byTruck[p.truckId])byTruck[p.truckId]={plate:p.plate,driver:p.driver,contr:contractor(d,p.contractorId),items:[]};
-      byTruck[p.truckId].items.push(p);
-    });
-    if(!Object.keys(byTruck).length){html+='<div class="empty">Нет данных</div>';}
-    Object.values(byTruck).forEach(tr=>{
-      let rows=tr.items.map(p=>'<tr><td>'+esc(p.date)+'</td><td class="num">'+fmt(p.days)+' дн.</td><td class="hide-mob">'+esc(p.comment||'—')+'</td></tr>').join('');
-      let totalD=tr.items.reduce((s,p)=>s+(+p.days||0),0);
-      html+='<div class="panel" style="margin-bottom:16px;page-break-inside:avoid">'
-        +'<div class="ph"><div class="pt">🚛 '+esc(tr.plate)+' — '+esc(tr.driver)+'</div><div class="small">'+esc(tr.contr)+'</div></div>'
-        +tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Дней</th><th class="hide-mob">Комментарий</th></tr></thead><tbody>'+rows+'</tbody>'
-          +'<tfoot><tr style="background:var(--bg)"><td><b>Итого</b></td><td class="num"><b>'+fmt(totalD)+' дн.</b></td><td></td></tr></tfoot>'
-          +'</table>')
-        +'</div>';
-    });
-  }
-
-  else if(doc==='spec_hours'){
-    let items=(d.hours||[]).filter(h=>!month||h.date.slice(0,7)===month).sort((a,b)=>a.date.localeCompare(b.date));
-    html='<div class="print-only" style="margin-bottom:8px;font-size:11px">Часы спецтехники — '+esc(mLabel)+'</div>';
-    let bySt={};
-    items.forEach(h=>{
-      let st=get(d.spectech||[],h.stId)||{name:'?',driver:'?',contractorId:''};
-      if(!bySt[h.stId])bySt[h.stId]={name:st.name,driver:st.driver,contr:contractor(d,st.contractorId),items:[]};
-      bySt[h.stId].items.push(h);
-    });
-    if(!Object.keys(bySt).length){html+='<div class="empty">Нет данных по часам спецтехники</div>';}
-    Object.values(bySt).forEach(st=>{
-      let rows=st.items.map(h=>'<tr><td>'+esc(h.date)+'</td><td class="num">'+fmt(h.hours)+' ч</td><td>'+statusBadge(h.status)+'</td><td class="hide-mob">'+esc(h.comment||'—')+'</td></tr>').join('');
-      let totalH=st.items.reduce((s,h)=>s+(+h.hours||0),0);
-      let workH=st.items.filter(h=>h.status==='work').reduce((s,h)=>s+(+h.hours||0),0);
-      let repH=st.items.filter(h=>h.status==='repair').reduce((s,h)=>s+(+h.hours||0),0);
-      let rainH=st.items.filter(h=>h.status==='rain').reduce((s,h)=>s+(+h.hours||0),0);
-      html+='<div class="panel" style="margin-bottom:16px;page-break-inside:avoid">'
-        +'<div class="ph"><div class="pt">🚜 '+esc(st.name)+' — '+esc(st.driver)+'</div><div class="small">'+esc(st.contr)+'</div></div>'
-        +tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Часов</th><th>Статус</th><th class="hide-mob">Комментарий</th></tr></thead><tbody>'+rows+'</tbody>'
-          +'<tfoot><tr style="background:var(--bg)"><td><b>Итого</b></td><td class="num"><b>'+fmt(totalH)+' ч</b></td>'
-          +'<td><span class="small">Работа: '+fmt(workH)+'ч / Ремонт: '+fmt(repH)+'ч / Дождь: '+fmt(rainH)+'ч</span></td><td></td></tr></tfoot>'
-          +'</table>')
-        +'</div>';
-    });
-    // truck rain days
-    let tdays=(d.truckDays||[]).filter(r=>!month||r.date.slice(0,7)===month).sort((a,b)=>a.date.localeCompare(b.date));
-    if(tdays.length){
-      let byT={};
-      tdays.forEach(r=>{
-        if(!byT[r.truckId])byT[r.truckId]={plate:r.plate,driver:r.driver,contr:contractor(d,r.contractorId),items:[]};
-        byT[r.truckId].items.push(r);
-      });
-      html+='<div style="margin-top:16px;font-weight:900;font-size:14px;margin-bottom:8px">🚛 Простои самосвалов</div>';
-      Object.values(byT).forEach(tr=>{
-        let rows=tr.items.map(r=>'<tr><td>'+esc(r.date)+'</td><td>'+truckStatusBadge(r.status)+'</td><td class="hide-mob">'+esc(r.comment||'—')+'</td></tr>').join('');
-        html+='<div class="panel" style="margin-bottom:12px;page-break-inside:avoid">'
-          +'<div class="ph"><div class="pt">🚛 '+esc(tr.plate)+' — '+esc(tr.driver)+'</div><div class="small">'+esc(tr.contr)+'</div></div>'
-          +tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Статус</th><th class="hide-mob">Комментарий</th></tr></thead><tbody>'+rows+'</tbody>'
-            +'<tfoot><tr style="background:var(--bg)"><td colspan="3"><b>Дней простоя: '+tr.items.length+'</b></td></tr></tfoot>'
-            +'</table>')
-          +'</div>';
-      });
-    }
-  }
-
-  else if(doc==='spec_fuel'){
-    let items=(d.specFuel||[]).filter(f=>!month||f.date.slice(0,7)===month).sort((a,b)=>a.date.localeCompare(b.date));
-    html='<div class="print-only" style="margin-bottom:8px;font-size:11px">ГСМ спецтехники — '+esc(mLabel)+'</div>';
-    let bySt={};
-    items.forEach(f=>{
-      let st=get(d.spectech||[],f.stId)||{name:'?',driver:'?',contractorId:''};
-      if(!bySt[f.stId])bySt[f.stId]={name:st.name,driver:st.driver,contr:contractor(d,st.contractorId),items:[]};
-      bySt[f.stId].items.push(f);
-    });
-    if(!Object.keys(bySt).length){html+='<div class="empty">Нет данных</div>';}
-    Object.values(bySt).forEach(st=>{
-      let rows=st.items.map(f=>'<tr><td>'+esc(f.date)+'</td><td>'+time(f.ts)+'</td><td class="num">'+fmt(f.liters)+' л</td><td class="hide-mob">'+esc(f.comment||'—')+'</td></tr>').join('');
-      let total=st.items.reduce((s,f)=>s+(+f.liters||0),0);
-      html+='<div class="panel" style="margin-bottom:16px;page-break-inside:avoid">'
-        +'<div class="ph"><div class="pt">🚜 '+esc(st.name)+' — '+esc(st.driver)+'</div><div class="small">'+esc(st.contr)+'</div></div>'
-        +tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Время</th><th>Литры</th><th class="hide-mob">Комментарий</th></tr></thead><tbody>'+rows+'</tbody>'
-          +'<tfoot><tr style="background:var(--bg)"><td colspan="2"><b>Итого</b></td><td class="num"><b>'+fmt(total)+' л</b></td><td></td></tr></tfoot>'
-          +'</table>')
-        +'</div>';
-    });
-  }
-
-  area.innerHTML=html;
-}
-
-// Firebase handles initial data load via dbSubscribe()
-</script>
-</body>
-</html>
+    +'<div class="field"><label>Длина дороги (м)<
