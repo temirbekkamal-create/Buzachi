@@ -466,7 +466,7 @@ function goTab(id){
   render(id);
 }
 function render(id){
-  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,truckStats:(typeof pageTruckStats==='function'?pageTruckStats:pageToday),print:pagePrint};
+  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,truckStats:pageTruckStats,print:pagePrint};
   try{
     document.getElementById('content').innerHTML=(map[id]||pageDash)();
     if(id==='marker')startClock();
@@ -943,19 +943,6 @@ function delTrip(id){if(!confirm('Удалить рейс?'))return;let d=load()
 
 function pageTruckStats(){
   let d=load();
-  const T={
-    m3:'\u043c\u00b3',
-    liter:'\u043b',
-    dash:'\u2014',
-    empty:'\u0421\u0430\u043c\u043e\u0441\u0432\u0430\u043b\u043e\u0432 \u043d\u0435\u0442',
-    title:'\u041f\u043e \u0441\u0430\u043c\u043e\u0441\u0432\u0430\u043b\u0430\u043c',
-    hint:'\u0421\u0432\u043e\u0434\u043a\u0430 \u043f\u043e \u0440\u0435\u0439\u0441\u0430\u043c \u0438 \u0432\u044b\u0434\u0430\u043d\u043d\u043e\u043c\u0443 \u0434\u0438\u0437\u0435\u043b\u044e.',
-    truck:'\u0421\u0430\u043c\u043e\u0441\u0432\u0430\u043b',
-    contractor:'\u041f\u043e\u0434\u0440\u044f\u0434\u0447\u0438\u043a',
-    trips:'\u0420\u0435\u0439\u0441\u043e\u0432',
-    diesel:'\u0414\u0438\u0437\u0435\u043b\u044c',
-    lastTrip:'\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0439 \u0440\u0435\u0439\u0441'
-  };
   let rows=d.trucks.map(t=>{
     let trips=d.trips.filter(x=>x.truckId===t.id);
     let fuel=d.dieselOut.filter(x=>x.truckId===t.id).reduce((s,x)=>s+(+x.liters||0),0);
@@ -964,12 +951,12 @@ function pageTruckStats(){
     return '<tr><td><b class="plate">'+esc(t.plate)+'</b><div class="small">'+esc(t.driver)+'</div></td>'
       +'<td class="hide-mob">'+esc(contractor(d,t.contractorId))+'</td>'
       +'<td class="num">'+trips.length+'</td>'
-      +'<td class="num">'+fmt(m3)+' '+T.m3+'</td>'
-      +'<td class="num">'+fmt(fuel)+' '+T.liter+'</td>'
-      +'<td class="hide-mob">'+(last?esc(last.date):T.dash)+'</td></tr>';
-  }).join('')||'<tr><td colspan="6"><div class="empty">'+T.empty+'</div></td></tr>';
-  return '<div class="title">'+T.title+'</div><div class="hint">'+T.hint+'</div>'
-    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>'+T.truck+'</th><th class="hide-mob">'+T.contractor+'</th><th>'+T.trips+'</th><th>'+T.m3+'</th><th>'+T.diesel+'</th><th class="hide-mob">'+T.lastTrip+'</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
+      +'<td class="num">'+fmt(m3)+' м³</td>'
+      +'<td class="num">'+fmt(fuel)+' л</td>'
+      +'<td class="hide-mob">'+(last?esc(last.date):'—')+'</td></tr>';
+  }).join('')||'<tr><td colspan="6"><div class="empty">Самосвалов нет</div></td></tr>';
+  return '<div class="title">По самосвалам</div><div class="hint">Сводка по рейсам и выданному дизелю.</div>'
+    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Самосвал</th><th class="hide-mob">Подрядчик</th><th>Рейсов</th><th>м³</th><th>Дизель</th><th class="hide-mob">Последний рейс</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
 }
 
 /* ---- TODAY ---- */
