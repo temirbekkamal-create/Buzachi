@@ -192,6 +192,7 @@ const DEFAULT_ADMIN={id:'admin',login:'admin',pass:'admin123',name:'Админи
 let CU=null,activeTab='',selTruck='',calcMonth=new Date().toISOString().slice(0,7),clockTimer=null;
 
 function uid(){return Date.now()+'_'+Math.random().toString(36).slice(2,8)}
+function byName(d,login){if(!login)return '—';if(login===DEFAULT_ADMIN.login)return DEFAULT_ADMIN.name;let u=(d.users||[]).find(x=>x.login===login);return u?u.name:login;}
 function today(){let d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function fmt(n){return (+n||0).toLocaleString('ru-RU',{maximumFractionDigits:2})}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
@@ -201,7 +202,7 @@ function dateTime(ts){return new Date(ts).toLocaleString('ru-RU')}
 // emptyClean — чистая структура без демо-данных (для Firebase)
 function emptyClean(){
   return {
-    users:[],
+    users:[],ppSpec:[],
     contractors:[],trucks:[],objects:[],quarries:[],warehouses:[],
     routes:[],trips:[],periods:[],dieselIn:[],dieselOut:[],pp:[],
     marker:{},norms:[],spectech:[],hours:[],specFuel:[],truckDays:[],
@@ -415,10 +416,12 @@ function finishLogin(u){
   document.getElementById('userName').textContent=u.name;
   document.getElementById('userRole').textContent=ROLE_NAMES[u.role]||u.role;
   document.getElementById('content').innerHTML='<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:32px;margin-bottom:12px">⏳</div><div style="font-weight:900">Загрузка данных...</div></div>';
+  writePresence(u);
   dbSubscribe();
   // buildTabs() вызывается из dbSubscribe() после первой загрузки данных
 }
 function logout(){
+  removePresence();
   dbUnsubscribe();
   CU=null;
   document.getElementById('app').style.display='none';
@@ -427,10 +430,10 @@ function logout(){
 }
 
 const TABS={
-  admin:[['dash','📊 Дашборд'],['money','💰 Расчёты'],['trips','📋 Рейсы'],['norms','📐 Нормы'],['warehouses','🏚 Склады'],['dieselAdmin','⛽ Дизель'],['trucks','🚛 Самосвалы'],['spectech','🚜 Спецтехника'],['contractors','🤝 Подрядчики'],['objects','📍 Объекты'],['quarries','⛰ Карьеры'],['routes','🛣 Маршруты'],['status','🛠 Статус'],['ppReport','🍽 ПП'],['users','👥 Пользователи'],['print','🖨️ Печать']],
-  otmet:[['marker','✅ Отметить'],['today','📋 Сводка']],
-  master:[['marker','🏗 Отметить'],['specHours','⏱ Часы'],['status','🛠 Статус'],['warehouses','🏚 Склады'],['today','📋 Сводка']],
-  prorab:[['marker','✏️ Отметить'],['norms','📐 Нормы'],['specHours','⏱ Часы'],['status','🛠 Статус'],['pp','🍽 ПП'],['today','📋 Сводка'],['trips','📋 Рейсы']],
+  admin:[['dash','📊 Дашборд'],['money','💰 Расчёты'],['trips','📋 Рейсы'],['truckStats','🚛 По самосвалам'],['norms','📐 Нормы'],['warehouses','🏚 Склады'],['dieselAdmin','⛽ Дизель'],['trucks','🚛 Самосвалы'],['spectech','🚜 Спецтехника'],['contractors','🤝 Подрядчики'],['objects','📍 Объекты'],['quarries','⛰ Карьеры'],['routes','🛣 Маршруты'],['status','🛠 Статус'],['ppReport','🍽 ПП'],['users','👥 Пользователи'],['online','🟢 Онлайн'],['print','🖨️ Печать']],
+  otmet:[['marker','✅ Отметить'],['today','📋 Сводка'],['truckStats','🚛 По самосвалам']],
+  master:[['marker','🏗 Отметить'],['norms','📐 Нормы'],['specHours','⏱ Часы'],['status','🛠 Статус'],['warehouses','🏚 Склады'],['pp','🍽 ПП'],['today','📋 Сводка'],['trips','📋 Рейсы'],['trucks','🚛 Самосвалы']],
+  prorab:[['marker','✏️ Отметить'],['norms','📐 Нормы'],['specHours','⏱ Часы'],['status','🛠 Статус'],['pp','🍽 ПП'],['today','📋 Сводка'],['trips','📋 Рейсы'],['truckStats','🚛 По самосвалам']],
   fueler:[['dieselIssue','⛽ Выдача'],['specFuelIssue','🚜 Спецтехника'],['fuelLog','📋 Журнал']]
 };
 function buildTabs(){
@@ -446,7 +449,7 @@ function goTab(id){
   render(id);
 }
 function render(id){
-  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,print:pagePrint};
+  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,truckStats:pageTruckStats,print:pagePrint};
   document.getElementById('content').innerHTML=(map[id]||pageDash)();
   if(id==='marker')startClock();
 }
@@ -511,11 +514,38 @@ function saveKm(id){let d=load(),r=get(d.routes,id);if(!r)return;r.km=+document.
 
 /* ---- STATUS ---- */
 function pageStatus(){
-  let d=load(),rows=d.trucks.map(t=>'<tr><td><b class="plate">'+esc(t.plate)+'</b><div class="small">'+esc(t.driver)+'</div></td><td><span class="badge '+(t.status==='line'?'b-green':'b-red')+'">'+(t.status==='line'?'Линия':'Ремонт')+'</span></td><td style="white-space:nowrap"><button class="btn btn-green btn-sm" onclick="setStatus(\''+t.id+'\',\'line\')">Линия</button> <button class="btn btn-red btn-sm" onclick="setStatus(\''+t.id+'\',\'repair\')">Ремонт</button></td></tr>').join('');
-  return '<div class="title">Линия / Ремонт</div><div class="hint">Самосвалы в ремонте нельзя отметить на рейс.</div>'
-    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Самосвал</th><th>Статус</th><th>Изменить</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
+  let d=load();
+  if(!d.spectech)d.spectech=[];
+  function statusRow(id,name,sub,isSpec){
+    let obj=isSpec?get(d.spectech,id):get(d.trucks,id);
+    if(!obj)return '';
+    let st=obj.status==='line';
+    let fn=isSpec?'setSpecStatus':'setStatus';
+    return '<tr><td><b'+(isSpec?'':' class="plate"')+'>'+esc(name)+'</b><div class="small">'+esc(sub)+'</div></td>'
+      +'<td><span class="badge '+(st?'b-green':'b-red')+'">'+(st?(isSpec?'Работает':'Линия'):'Ремонт')+'</span></td>'
+      +'<td style="white-space:nowrap">'
+      +'<button class="btn btn-green btn-sm" data-fn="'+fn+'" data-id="'+id+'" data-st="line" onclick="statusClick(this)">'+(isSpec?'Работает':'Линия')+'</button> '
+      +'<button class="btn btn-red btn-sm" data-fn="'+fn+'" data-id="'+id+'" data-st="repair" onclick="statusClick(this)">Ремонт</button>'
+      +'</td></tr>';
+  }
+  let trRows=d.trucks.map(t=>statusRow(t.id,t.plate,t.driver+' · '+contractor(d,t.contractorId),false)).join('');
+  let stRows=d.spectech.map(s=>statusRow(s.id,s.name,s.driver+' · '+contractor(d,s.contractorId),true)).join('');
+  return '<div class="title">Линия / Ремонт</div>'
+    +'<div class="hint">Самосвалы в ремонте нельзя отметить на рейс.</div>'
+    +'<div class="panel"><div class="ph"><div class="pt">🚛 Самосвалы</div></div>'
+    +tbl('<table class="tbl"><thead><tr><th>Самосвал</th><th>Статус</th><th>Изменить</th></tr></thead><tbody>'+trRows+'</tbody></table>')
+    +'</div>'
+    +(stRows?'<div class="panel"><div class="ph"><div class="pt">🚜 Спецтехника</div></div>'
+    +tbl('<table class="tbl"><thead><tr><th>Техника</th><th>Статус</th><th>Изменить</th></tr></thead><tbody>'+stRows+'</tbody></table>')
+    +'</div>':'');
+}
+function statusClick(btn){
+  var fn=btn.dataset.fn,id=btn.dataset.id,st=btn.dataset.st;
+  if(fn==='setSpecStatus')setSpecStatus(id,st);
+  else setStatus(id,st);
 }
 function setStatus(id,status){let d=load(),t=get(d.trucks,id);if(!t)return;t.status=status;if(save(d)){toast('Изменено');render(activeTab)}}
+function setSpecStatus(id,status){let d=load(),s=get(d.spectech||[],id);if(!s)return;s.status=status;if(save(d)){toast('Статус изменён');render(activeTab)}}
 
 /* ---- MARKER SESSION ---- */
 function mKey(k){return 'sess_'+CU.login+'_'+today()+'_'+k}
@@ -769,17 +799,55 @@ function fuelLogTable(d,myOnly){
   let arr=d.dieselOut.slice().reverse();
   if(myOnly)arr=arr.filter(x=>x.by===CU.login);
   let canDel=CU.role==='admin';
-  let rows=arr.map(f=>'<tr><td>'+dateTime(f.ts)+'</td><td><b class="plate">'+esc(f.plate)+'</b><div class="small">'+esc(f.driver)+'</div></td><td class="num bad">-'+fmt(f.liters)+' л</td><td class="hide-mob">'+esc(f.comment||'—')+'</td><td>'+(canDel?'<button class="btn btn-red btn-sm" onclick="delDieselOut(\''+f.id+'\')">✕</button>':'')+'</td></tr>').join('')||'<tr><td colspan="5"><div class="empty">Выдач нет</div></td></tr>';
-  return '<div class="panel"><div class="ph"><div class="pt">Журнал выдачи</div></div>'+tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Литры</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
+  let canEdit=CU.role==='admin'||CU.role==='prorab'||CU.role==='master';
+  let rows=arr.map(f=>'<tr>'
+    +'<td>'+dateTime(f.ts)+'</td>'
+    +'<td><b class="plate">'+esc(f.plate)+'</b><div class="small">'+esc(f.driver)+'</div></td>'
+    +'<td>'+esc(contractor(d,f.contractorId))+'</td>'
+    +'<td class="num bad">-'+fmt(f.liters)+' л</td>'
+    +'<td class="hide-mob">'+esc(f.comment||'—')+'</td>'
+    +'<td style="white-space:nowrap">'
+    +(canEdit?'<button class="btn btn-ghost btn-sm" data-id="'+f.id+'" onclick="editFuelById(this)">✏️</button> ':'')
+    +(canDel?'<button class="btn btn-red btn-sm" data-id="'+f.id+'" onclick="delFuelById(this)">✕</button>':'')
+    +'</td>'
+    +'</tr>').join('')||'<tr><td colspan="6"><div class="empty">Выдач нет</div></td></tr>';
+  return '<div class="panel"><div class="ph"><div class="pt">Журнал выдачи дизеля</div></div>'
+    +tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Подрядчик</th><th>Литры</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')
+    +'</div>';
 }
 function pageFuelLog(){return '<div class="title">Журнал дизеля</div>'+fuelLogTable(load(),true)}
+function delFuelById(btn){if(!confirm('Удалить?'))return;let d=load();d.dieselOut=d.dieselOut.filter(x=>x.id!==btn.dataset.id);if(save(d)){toast('Удалено');render(activeTab)}}
+function editFuelById(btn){
+  let d=load(),f=get(d.dieselOut,btn.dataset.id);if(!f)return;
+  let nLit=prompt('Литры (было '+f.liters+'):',f.liters);if(nLit===null)return;
+  let nDate=prompt('Дата (было '+f.date+'):',f.date);if(nDate===null)return;
+  let v=+nLit;if(v<=0)return toast('Неверно','err');
+  f.liters=v;f.date=nDate;f.editBy=CU.login;f.editTs=Date.now();
+  if(save(d)){toast('Изменено');render(activeTab)}
+}
 function delDieselOut(id){if(!confirm('Удалить?'))return;let d=load();d.dieselOut=d.dieselOut.filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
 
 /* ---- PP ---- */
 function pagePP(){
-  let d=load(),opts=d.trucks.map(t=>'<option value="'+t.id+'">'+esc(t.plate)+' — '+esc(t.driver)+'</option>').join('');
-  return '<div class="title">ПП водителей</div>'
-    +'<div class="panel"><div class="pb"><div class="grid"><div class="field"><label>Дата</label><input id="ppDate" type="date" value="'+today()+'"></div><div class="field"><label>Водитель</label><select id="ppTruck">'+opts+'</select></div><div class="field"><label>Дней</label><input id="ppDays" type="number" value="1" min="1"></div><div class="field"><label>Комментарий</label><input id="ppComment"></div></div><button class="btn btn-green" onclick="addPP()">Добавить ПП</button></div></div>'
+  let d=load();
+  if(!d.spectech)d.spectech=[];
+  let trOpts=d.trucks.map(t=>'<option value="'+t.id+'">'+esc(t.plate)+' — '+esc(t.driver)+'</option>').join('');
+  let stOpts=d.spectech.map(s=>'<option value="'+s.id+'">'+esc(s.name)+' — '+esc(s.driver)+'</option>').join('');
+  return '<div class="title">ПП водителей и операторов</div>'
+    // Trucks PP
+    +'<div class="panel"><div class="ph"><div class="pt">🚛 ПП самосвалов</div></div><div class="pb"><div class="grid">'
+    +'<div class="field"><label>Дата</label><input id="ppDate" type="date" value="'+today()+'"></div>'
+    +'<div class="field"><label>Самосвал / водитель</label><select id="ppTruck">'+trOpts+'</select></div>'
+    +'<div class="field"><label>Дней</label><input id="ppDays" type="number" value="1" min="1"></div>'
+    +'<div class="field"><label>Комментарий</label><input id="ppComment"></div>'
+    +'</div><button class="btn btn-green" onclick="addPP()">Добавить ПП самосвала</button></div></div>'
+    // Spectech PP
+    +(stOpts?'<div class="panel"><div class="ph"><div class="pt">🚜 ПП спецтехники</div></div><div class="pb"><div class="grid">'
+    +'<div class="field"><label>Дата</label><input id="ppStDate" type="date" value="'+today()+'"></div>'
+    +'<div class="field"><label>Спецтехника / оператор</label><select id="ppSt">'+stOpts+'</select></div>'
+    +'<div class="field"><label>Дней</label><input id="ppStDays" type="number" value="1" min="1"></div>'
+    +'<div class="field"><label>Комментарий</label><input id="ppStComment"></div>'
+    +'</div><button class="btn btn-green" onclick="addPPSpec()">Добавить ПП спецтехники</button></div></div>':'')
     +ppTable(d);
 }
 function addPP(){
@@ -789,10 +857,46 @@ function addPP(){
   d.pp.push({id:uid(),ts:Date.now(),date:document.getElementById('ppDate').value||today(),truckId:tr.id,plate:tr.plate,driver:tr.driver,contractorId:tr.contractorId,days,comment:document.getElementById('ppComment').value.trim(),by:CU.login});
   if(save(d)){toast('ПП добавлено');render(activeTab)}
 }
-function ppTable(d){
-  let rows=d.pp.slice().reverse().map(p=>'<tr><td>'+esc(p.date)+'</td><td><b class="plate">'+esc(p.plate)+'</b><div class="small">'+esc(p.driver)+'</div></td><td class="num">'+fmt(p.days)+'</td><td class="hide-mob">'+esc(p.comment||'—')+'</td><td><button class="btn btn-red btn-sm" onclick="delPP(\''+p.id+'\')">✕</button></td></tr>').join('')||'<tr><td colspan="5"><div class="empty">ПП нет</div></td></tr>';
-  return '<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Водитель</th><th>Дней</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
+function addPPSpec(){
+  let d=load();
+  if(!d.ppSpec)d.ppSpec=[];
+  let stEl=document.getElementById('ppSt'),st=stEl?get(d.spectech||[],stEl.value):null;
+  let days=+document.getElementById('ppStDays').value||0;
+  if(!st)return toast('Выберите спецтехнику','err');
+  if(days<=0)return toast('Введите дни','err');
+  d.ppSpec.push({id:uid(),ts:Date.now(),date:document.getElementById('ppStDate').value||today(),stId:st.id,name:st.name,driver:st.driver,contractorId:st.contractorId,days,comment:document.getElementById('ppStComment').value.trim(),by:CU.login});
+  if(save(d)){toast('ПП спецтехники добавлено');render(activeTab)}
 }
+function ppTable(d){
+  if(!d.ppSpec)d.ppSpec=[];
+  let trRows=d.pp.slice().reverse().map(p=>'<tr>'
+    +'<td>'+esc(p.date)+'</td>'
+    +'<td>🚛 <b class="plate">'+esc(p.plate)+'</b><div class="small">'+esc(p.driver)+'</div></td>'
+    +'<td>'+esc(contractor(d,p.contractorId))+'</td>'
+    +'<td class="num">'+fmt(p.days)+'</td>'
+    +'<td class="hide-mob">'+esc(p.comment||'—')+'</td>'
+    +'<td><button class="btn btn-red btn-sm" data-id="'+p.id+'" onclick="delPPById(this)">✕</button></td>'
+    +'</tr>').join('');
+  let stRows=d.ppSpec.slice().reverse().map(p=>'<tr>'
+    +'<td>'+esc(p.date)+'</td>'
+    +'<td>🚜 <b>'+esc(p.name)+'</b><div class="small">'+esc(p.driver)+'</div></td>'
+    +'<td>'+esc(contractor(d,p.contractorId))+'</td>'
+    +'<td class="num">'+fmt(p.days)+'</td>'
+    +'<td class="hide-mob">'+esc(p.comment||'—')+'</td>'
+    +'<td><button class="btn btn-red btn-sm" data-id="'+p.id+'" data-spec="1" onclick="delPPById(this)">✕</button></td>'
+    +'</tr>').join('');
+  let allRows=trRows+stRows||'<tr><td colspan="6"><div class="empty">ПП нет</div></td></tr>';
+  return '<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Дата</th><th>Водитель / Оператор</th><th>Подрядчик</th><th>Дней</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+allRows+'</tbody></table>')+'</div>';
+}
+function delPPById(btn){
+  var id=btn.dataset.id,isSpec=btn.dataset.spec;
+  if(!confirm('Удалить ПП?'))return;
+  var d=load();
+  if(isSpec){d.ppSpec=(d.ppSpec||[]).filter(x=>x.id!==id);}
+  else{d.pp=d.pp.filter(x=>x.id!==id);}
+  if(save(d)){toast('Удалено');render(activeTab)}
+}
+
 function pagePPReport(){let d=load();return '<div class="title">ПП водителей</div>'+ppTable(d)}
 function delPP(id){if(!confirm('Удалить?'))return;let d=load();d.pp=d.pp.filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
 
@@ -827,43 +931,100 @@ function pageToday(){
 }
 
 /* ---- MONEY ---- */
+function cRate(d,cid,key){let con=get(d.contractors,cid);if(con&&con.rates&&con.rates[key]!==undefined&&con.rates[key]!=='')return +con.rates[key];return +d.prices[key]||0;}
 function contractorCalc(d,cid,m){
   let gross=0,missing=0,trips=0,m3=0;
   d.trips.filter(t=>t.contractorId===cid&&monthOf(t.date,m)).forEach(t=>{
     trips++;m3+=+t.m3||0;
     let km=rKm(d,t.routeKey);if(!km){missing++;return}
-    gross+=t.m3*km*d.prices.transportRate;
+    gross+=t.m3*km*cRate(d,cid,'transportRate');
   });
   let liters=d.dieselOut.filter(f=>f.contractorId===cid&&monthOf(f.date,m)).reduce((s,f)=>s+(+f.liters||0),0),
-      diesel=liters*d.prices.dieselPrice,
+      diesel=liters*cRate(d,cid,'dieselPrice'),
       days=d.pp.filter(p=>p.contractorId===cid&&monthOf(p.date,m)).reduce((s,p)=>s+(+p.days||0),0),
-      pp=days*d.prices.ppPrice;
-  return {gross,missing,trips,m3,liters,diesel,days,pp,net:gross-diesel-pp};
+      pp=days*cRate(d,cid,'ppPrice'),
+      specH=0,specPay=0;
+  (d.spectech||[]).filter(s=>s.contractorId===cid).forEach(s=>{
+    let hrs=(d.hours||[]).filter(h=>h.stId===s.id&&monthOf(h.date,m)&&h.status==='work').reduce((a,h)=>a+(+h.hours||0),0);
+    let rate=+s.hourRate||cRate(d,cid,'hourRate')||0;
+    specH+=hrs;specPay+=hrs*rate;
+  });
+  return {gross,missing,trips,m3,liters,diesel,days,pp,specH,specPay,net:gross+specPay-diesel-pp};
 }
 function pageMoney(){
   let d=load(),isAdmin=CU.role==='admin';
-  let rows=d.contractors.map(c=>{
-    let x=contractorCalc(d,c.id,calcMonth);
+  let ratesPanels='';
+  if(isAdmin){
+    ratesPanels='<div id="ratesWrap"></div>';
+  }
+  let rows=d.contractors.map(con=>{
+    let x=contractorCalc(d,con.id,calcMonth);
+    let tr=cRate(d,con.id,'transportRate'),dp=cRate(d,con.id,'dieselPrice'),ppr=cRate(d,con.id,'ppPrice'),hr=cRate(d,con.id,'hourRate');
     if(isAdmin){
-      return '<tr><td><b>'+esc(c.name)+'</b></td><td class="num">'+x.trips+'</td><td class="num">'+fmt(x.m3)+' м³</td>'
+      return '<tr><td><b>'+esc(con.name)+'</b><div class="small">'+fmt(tr)+' тг/м³/км · '+fmt(dp)+' тг/л · '+fmt(ppr)+' тг/дн'+(hr?' · '+fmt(hr)+' тг/ч':'')+' (инд. цены)</div></td>'
+        +'<td class="num">'+x.trips+'</td><td class="num">'+fmt(x.m3)+' м³</td>'
         +'<td class="num good hide-mob">'+fmt(x.gross)+' ₸'+(x.missing?' <div><span class="badge b-yellow">'+x.missing+' без км</span></div>':'')+'</td>'
         +'<td class="num bad hide-mob">'+fmt(x.liters)+' л</td>'
         +'<td class="num bad hide-mob">'+fmt(x.days)+' дн.</td>'
-        +'<td class="num '+(x.net>=0?'good':'bad')+'" style="font-size:15px">'+fmt(x.net)+' ₸</td></tr>';
+        +(x.specH>0?'<td class="num hide-mob">'+fmt(x.specH)+' ч<br>'+fmt(x.specPay)+' ₸</td>':'<td class="hide-mob">—</td>')
+        +'<td class="num '+(x.net>=0?'good':'bad')+'" style="font-size:15px;font-weight:900">'+fmt(x.net)+' ₸</td></tr>';
     } else {
-      return '<tr><td><b>'+esc(c.name)+'</b></td><td class="num">'+x.trips+'</td><td class="num">'+fmt(x.m3)+' м³</td>'
+      return '<tr><td><b>'+esc(con.name)+'</b></td><td class="num">'+x.trips+'</td><td class="num">'+fmt(x.m3)+' м³</td>'
         +'<td class="num">'+fmt(x.liters)+' л</td><td class="num">'+fmt(x.days)+' дн.</td></tr>';
     }
   }).join('');
   let thead=isAdmin
-    ?'<tr><th>Подрядчик</th><th>Рейсов</th><th>м³</th><th class="hide-mob">Начислено</th><th class="hide-mob">Дизель</th><th class="hide-mob">ПП</th><th>Итого</th></tr>'
+    ?'<tr><th>Подрядчик</th><th>Рейсов</th><th>м³</th><th class="hide-mob">Перевозка</th><th class="hide-mob">Дизель</th><th class="hide-mob">ПП</th><th class="hide-mob">Спецтех</th><th>Итого</th></tr>'
     :'<tr><th>Подрядчик</th><th>Рейсов</th><th>м³</th><th>Дизель (л)</th><th>ПП (дн.)</th></tr>';
-  let topPanel=isAdmin
-    ?'<div class="panel"><div class="pb"><div class="grid"><div class="field"><label>Месяц</label><input id="calcMonth" type="month" value="'+calcMonth+'" onchange="calcMonth=this.value;render(\'money\')"></div><div class="field"><label>Перевозка тг/м³/км</label><input id="priceTransport" type="number" value="'+d.prices.transportRate+'"></div><div class="field"><label>Дизель тг/литр</label><input id="priceDiesel" type="number" value="'+d.prices.dieselPrice+'"></div><div class="field"><label>ПП тг/день</label><input id="pricePP" type="number" value="'+d.prices.ppPrice+'"></div></div><button class="btn btn-green" onclick="savePrices()">Сохранить цены</button></div></div>'
-    :'<div class="panel"><div class="pb"><div class="field"><label>Месяц</label><input id="calcMonth" type="month" value="'+calcMonth+'" onchange="calcMonth=this.value;render(\'money\')"></div></div></div>';
-  let hint=isAdmin?'Начислено = м³ × км × '+fmt(d.prices.transportRate)+' тг. Минус дизель и ПП.':'Сводка за месяц.';
-  return '<div class="title">Расчёты</div><div class="hint">'+hint+'</div>'+topPanel
-    +'<div class="panel">'+tbl('<table class="tbl"><thead>'+thead+'</thead><tbody>'+rows+'</tbody></table>')+'</div>';
+  var topPanel;
+  if(isAdmin){
+    topPanel='<div class="panel"><div class="ph"><div class="pt">Общие цены (по умолчанию)</div></div>'
+      +'<div class="pb"><div class="grid">'
+      +'<div class="field"><label>Месяц</label><input id="calcMonth" type="month" value="'+calcMonth+'" onchange="calcMonth=this.value;render(\'money\')">' +'</div>'
+      +'<div class="field"><label>Перевозка тг/м3/км</label><input id="priceTransport" type="number" value="'+d.prices.transportRate+'"></div>'
+      +'<div class="field"><label>Дизель тг/литр</label><input id="priceDiesel" type="number" value="'+d.prices.dieselPrice+'"></div>'
+      +'<div class="field"><label>ПП тг/день</label><input id="pricePP" type="number" value="'+d.prices.ppPrice+'"></div>'
+      +'</div><button class="btn btn-green" onclick="savePrices()">Сохранить общие цены</button></div></div>';
+  } else {
+    topPanel='<div class="panel"><div class="pb"><div class="field"><label>Месяц</label>'
+      +'<input id="calcMonth" type="month" value="'+calcMonth+'" onchange="calcMonth=this.value;render(\'money\')">' +'</div></div></div>';
+  }
+  let html='<div class="title">Расчёты</div><div class="hint">'+(isAdmin?'У каждого подрядчика свои расценки. Изменения сохраняются автоматически.':'Сводка за месяц.')+'</div>'
+    +topPanel
+    +(isAdmin?'<div class="title" style="margin-top:16px;font-size:16px">💰 Индивидуальные расценки</div><div class="hint">Изменяются автоматически после ввода</div>'+ratesPanels:'')
+    +'<div class="panel"><div class="ph"><div class="pt">Итоги за '+calcMonth+'</div></div>'
+    +tbl('<table class="tbl"><thead>'+thead+'</thead><tbody>'+rows+'</tbody></table>')
+    +'</div>';
+  setTimeout(function(){renderRates(d);},10);
+  return html;
+}
+function renderRates(d){
+  var wrap=document.getElementById('ratesWrap');if(!wrap)return;
+  if(CU.role!=='admin'){wrap.innerHTML='';return;}
+  wrap.innerHTML=d.contractors.map(function(con){
+    var r=con.rates||{};
+    var gtr=fmt(d.prices.transportRate),gdp=fmt(d.prices.dieselPrice),gpp=fmt(d.prices.ppPrice);
+    function mkField(label,key,ph,val){
+      return '<div class="field"><label>'+label+'</label>'
+        +'<input type="number" data-cid="'+con.id+'" data-key="'+key+'" placeholder="'+ph+'" value="'+val+'" oninput="saveConRateEl(this)"></div>';
+    }
+    return '<div class="panel" style="border-left:4px solid var(--orange)">'
+      +'<div class="ph"><div class="pt">💰 '+esc(con.name)+'</div>'
+      +'<div class="small">Оставьте пустым — будет общая цена</div></div>'
+      +'<div class="pb"><div class="grid">'
+      +mkField('Перевозка тг/м³/км','transportRate','общая: '+gtr,r.transportRate||'')
+      +mkField('Дизель тг/литр','dieselPrice','общая: '+gdp,r.dieselPrice||'')
+      +mkField('ПП тг/день','ppPrice','общая: '+gpp,r.ppPrice||'')
+      +mkField('Спецтех тг/час','hourRate','0',r.hourRate||'')
+      +'</div></div></div>';
+  }).join('');
+}
+function saveConRateEl(el){
+  var cid=el.dataset.cid,key=el.dataset.key,val=el.value;
+  var d=load(),con=get(d.contractors,cid);
+  if(!con)return;if(!con.rates)con.rates={};
+  if(val===''||val===null)delete con.rates[key];else con.rates[key]=+val;
+  save(d);
 }
 function savePrices(){
   let d=load();
@@ -1117,15 +1278,70 @@ function editNorm(id){
 function pageSpectech(){
   let d=load();
   if(!d.spectech)d.spectech=[];
-  let cOpts=d.contractors.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('');
-  let rows=d.spectech.map(s=>'<tr><td><b>'+esc(s.name)+'</b></td><td>'+esc(s.driver)+'</td><td>'+esc(contractor(d,s.contractorId))+'</td><td><span class="badge '+(s.status==='line'?'b-green':'b-red')+'">'+(s.status==='line'?'Работает':'Ремонт')+'</span></td><td><button class="btn btn-red btn-sm" onclick="rmSpectech(\''+s.id+'\')">✕</button></td></tr>').join('')||'<tr><td colspan="5"><div class="empty">Нет спецтехники</div></td></tr>';
-  return '<div class="title">Спецтехника</div><div class="hint">Экскаваторы, бульдозеры, грейдеры и т.д.</div>'
-    +'<div class="panel"><div class="ph"><div class="pt">Добавить</div></div><div class="pb"><div class="grid">'
+  if(!d.hours)d.hours=[];
+  let cOpts=d.contractors.map(con=>'<option value="'+con.id+'">'+esc(con.name)+'</option>').join('');
+
+  // Monthly summary per spectech
+  let mOpts='';
+  let months={};
+  d.hours.forEach(h=>months[h.date.slice(0,7)]=1);
+  Object.keys(months).sort().reverse().forEach(m=>{mOpts+='<option value="'+m+'">'+m+'</option>';});
+  let selMonth=document.getElementById?.('stMonthSel')?.value||new Date().toISOString().slice(0,7);
+
+  // Build hours summary table
+  let sumRows=d.spectech.map(s=>{
+    let hAll=(d.hours||[]).filter(h=>h.stId===s.id);
+    let hMonth=hAll.filter(h=>h.date.slice(0,7)===selMonth);
+    let workH=hMonth.filter(h=>h.status==='work').reduce((a,h)=>a+(+h.hours||0),0);
+    let repH=hMonth.filter(h=>h.status==='repair').reduce((a,h)=>a+(+h.hours||0),0);
+    let rainH=hMonth.filter(h=>h.status==='rain').reduce((a,h)=>a+(+h.hours||0),0);
+    let totalH=workH+repH+rainH;
+    let rate=+s.hourRate||0;
+    let pay=workH*rate;
+    return '<tr>'
+      +'<td><b>'+esc(s.name)+'</b><div class="small">'+esc(s.driver)+' · '+esc(contractor(d,s.contractorId))+'</div></td>'
+      +'<td><span class="badge '+(s.status==='line'?'b-green':'b-red')+'">'+(s.status==='line'?'Работает':'Ремонт')+'</span></td>'
+      +'<td class="num good">'+fmt(workH)+' ч</td>'
+      +'<td class="num bad">'+fmt(repH)+' ч</td>'
+      +'<td class="num blue">'+fmt(rainH)+' ч</td>'
+      +'<td class="num">'+fmt(totalH)+' ч</td>'
+      +(rate?'<td class="num good">'+fmt(pay)+' ₸</td>':'<td class="small">нет ставки</td>')
+      +'<td><input type="number" placeholder="тг/ч" value="'+(s.hourRate||'')+'" data-id="'+s.id+'" oninput="saveStRateEl(this)" style="width:90px;padding:6px;border:1px solid #ddd;border-radius:8px"></td>'
+      +'<td><button class="btn btn-red btn-sm" data-id="'+s.id+'" onclick="rmStById(this)">✕</button></td>'
+      +'</tr>';
+  }).join('')||'<tr><td colspan="9"><div class="empty">Спецтехники нет</div></td></tr>';
+
+  // Total work hours this month
+  let totalWork=(d.spectech||[]).reduce((sum,s)=>{
+    return sum+(d.hours||[]).filter(h=>h.stId===s.id&&h.date.slice(0,7)===selMonth&&h.status==='work').reduce((a,h)=>a+(+h.hours||0),0);
+  },0);
+
+  return '<div class="title">🚜 Спецтехника</div>'
+    // Add form
+    +'<div class="panel"><div class="ph"><div class="pt">Добавить технику</div></div><div class="pb"><div class="grid">'
     +'<div class="field"><label>Название / номер</label><input id="stName" placeholder="Экскаватор CAT 320"></div>'
     +'<div class="field"><label>Оператор / водитель</label><input id="stDriver" placeholder="Иванов А.А."></div>'
     +'<div class="field"><label>Подрядчик</label><select id="stContr">'+cOpts+'</select></div>'
-    +'</div><button class="btn btn-green" onclick="addSpectech()">Добавить спецтехнику</button></div></div>'
-    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Техника</th><th>Оператор</th><th>Подрядчик</th><th>Статус</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
+    +'</div><button class="btn btn-green" onclick="addSpectech()">Добавить</button></div></div>'
+    // Hours summary
+    +'<div class="panel"><div class="ph"><div class="pt">Часы и расчёт по спецтехнике</div>'
+    +'<div style="display:flex;align-items:center;gap:8px">'
+    +'<span class="badge b-green">Работа: '+fmt(totalWork)+' ч</span>'
+    +'<select id="stMonthSel" onchange="render(activeTab)" style="padding:6px;border:1px solid #ddd;border-radius:8px;font-size:13px">'
+    +(mOpts||'<option value="'+selMonth+'">'+selMonth+'</option>')
+    +'</select>'
+    +'</div></div>'
+    +tbl('<table class="tbl"><thead><tr><th>Техника</th><th>Статус</th><th class="good">Работа</th><th class="bad">Ремонт</th><th class="blue">Дождь</th><th>Итого</th><th>К оплате</th><th>Ставка тг/ч</th><th></th></tr></thead><tbody>'+sumRows+'</tbody></table>')
+    +'</div>';
+}
+function saveStRateEl(el){
+  let d=load(),s=get(d.spectech||[],el.dataset.id);
+  if(!s)return;s.hourRate=+el.value||0;save(d);
+}
+function rmStById(btn){
+  if(!confirm('Удалить спецтехнику?'))return;
+  let d=load();d.spectech=(d.spectech||[]).filter(x=>x.id!==btn.dataset.id);
+  if(save(d)){toast('Удалено');render(activeTab)}
 }
 function addSpectech(){
   let d=load();if(!d.spectech)d.spectech=[];
@@ -1357,7 +1573,10 @@ function renderPrintPreview(){
   }
 
   else if(doc==='pp_list'){
-    let items=d.pp.filter(p=>!month||p.date.slice(0,7)===month).sort((a,b)=>a.date.localeCompare(b.date));
+    let ppSpec=(d.ppSpec||[]).filter(p=>!month||p.date.slice(0,7)===month);
+    let items=d.pp.filter(p=>!month||p.date.slice(0,7)===month).concat(
+      ppSpec.map(p=>({...p,plate:'['+p.name+']',driver:p.driver,isSpec:true}))
+    ).sort((a,b)=>a.date.localeCompare(b.date));
     html='<div class="print-only" style="margin-bottom:8px;font-size:11px">Питание и проживание (ПП) — '+esc(mLabel)+'</div>';
     let byTruck={};
     items.forEach(p=>{
@@ -1531,6 +1750,41 @@ function delUser(id){
   if(save(d)){toast('Удалено');render(activeTab)}
 }
 
+
+function saveConRate(cid,key,val){let d=load(),con=get(d.contractors,cid);if(!con)return;if(!con.rates)con.rates={};if(val===''||val===null)delete con.rates[key];else con.rates[key]=+val;save(d);}
+function saveStHourRate(id,val){let d=load(),s=get(d.spectech||[],id);if(!s)return;s.hourRate=+val||0;save(d);toast('Ставка сохранена');}
+
+const PRESENCE_URL='https://buzachi-29b84-default-rtdb.europe-west1.firebasedatabase.app/presence';
+let _presenceTimer=null;
+function writePresence(u){if(_presenceTimer)clearInterval(_presenceTimer);let ping=()=>fetch(PRESENCE_URL+'/'+u.login+'.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:u.name,role:u.role,login:u.login,ts:Date.now()})}).catch(()=>{});ping();_presenceTimer=setInterval(ping,30000);}
+function removePresence(){if(_presenceTimer){clearInterval(_presenceTimer);_presenceTimer=null}if(CU)fetch(PRESENCE_URL+'/'+CU.login+'.json',{method:'DELETE'}).catch(()=>{});}
+function pageOnline(){
+  // Return placeholder immediately, fill async
+  setTimeout(async function(){
+    var wrap=document.getElementById('onlineContent');
+    if(!wrap)return;
+    var data={};
+    try{var r=await fetch(PRESENCE_URL+'.json');if(r.ok)data=await r.json()||{};}catch(e){}
+    var now=Date.now();
+    var icons={admin:'👑',otmet:'✅',master:'🏗',prorab:'✏️',fueler:'⛽'};
+    var users=Object.values(data).filter(function(u){return now-u.ts<120000;}).sort(function(a,b){return a.name.localeCompare(b.name);});
+    var rows=users.map(function(u){
+      var ago=Math.round((now-u.ts)/1000);
+      var agoStr=ago<60?ago+'с назад':Math.round(ago/60)+'мин назад';
+      return '<tr><td>'+(icons[u.role]||'👤')+' <b>'+esc(u.name)+'</b></td>'
+        +'<td><span class="badge b-green">'+(ROLE_NAMES[u.role]||u.role)+'</span></td>'
+        +'<td class="small">'+agoStr+'</td></tr>';
+    }).join('');
+    if(!rows)rows='<tr><td colspan="3"><div class="empty">Никого нет онлайн</div></td></tr>';
+    wrap.innerHTML=tbl('<table class="tbl"><thead><tr><th>Пользователь</th><th>Роль</th><th>Активность</th></tr></thead><tbody>'+rows+'</tbody></table>');
+  },50);
+  return '<div class="title">🟢 Кто онлайн</div>'
+    +'<div class="hint">Активные за последние 2 мин.</div>'
+    +'<div class="panel"><div class="ph"><div class="pt">Сейчас на сайте</div>'
+    +'<button class="btn btn-ghost btn-sm" onclick="render(activeTab)">🔄 Обновить</button></div>'
+    +'<div id="onlineContent"><div class="empty">Загрузка...</div></div>'
+    +'</div>';
+}
 // Firebase handles initial data load via dbSubscribe()
 </script>
 </body>
