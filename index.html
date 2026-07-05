@@ -472,8 +472,8 @@ function render(id){
     if(id==='marker')startClock();
   }catch(e){
     console.error(e);
-    document.getElementById('content').innerHTML='<div class="empty"><b>?????? ???????? ???????</b><br><span class="small">???????? ????????. ???? ???????????, ????????? ?????? Firebase.</span></div>';
-    toast('?????? ???????? ???????: '+e.message,'err');
+    document.getElementById('content').innerHTML='<div class="empty"><b>Ошибка загрузки раздела</b><br><span class="small">Обновите страницу. Если повторяется, проверьте данные Firebase.</span></div>';
+    toast('Ошибка загрузки раздела: '+e.message,'err');
   }
 }
 
@@ -951,12 +951,12 @@ function pageTruckStats(){
     return '<tr><td><b class="plate">'+esc(t.plate)+'</b><div class="small">'+esc(t.driver)+'</div></td>'
       +'<td class="hide-mob">'+esc(contractor(d,t.contractorId))+'</td>'
       +'<td class="num">'+trips.length+'</td>'
-      +'<td class="num">'+fmt(m3)+' ??</td>'
-      +'<td class="num">'+fmt(fuel)+' ?</td>'
-      +'<td class="hide-mob">'+(last?esc(last.date):'?')+'</td></tr>';
-  }).join('')||'<tr><td colspan="6"><div class="empty">?????????? ???</div></td></tr>';
-  return '<div class="title">?? ??????????</div><div class="hint">?????? ?? ?????? ? ????????? ??????.</div>'
-    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>????????</th><th class="hide-mob">?????????</th><th>??????</th><th>??</th><th>??????</th><th class="hide-mob">????????? ????</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
+      +'<td class="num">'+fmt(m3)+' м³</td>'
+      +'<td class="num">'+fmt(fuel)+' л</td>'
+      +'<td class="hide-mob">'+(last?esc(last.date):'—')+'</td></tr>';
+  }).join('')||'<tr><td colspan="6"><div class="empty">Самосвалов нет</div></td></tr>';
+  return '<div class="title">По самосвалам</div><div class="hint">Сводка по рейсам и выданному дизелю.</div>'
+    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Самосвал</th><th class="hide-mob">Подрядчик</th><th>Рейсов</th><th>м³</th><th>Дизель</th><th class="hide-mob">Последний рейс</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
 }
 
 /* ---- TODAY ---- */
