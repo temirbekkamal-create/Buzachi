@@ -262,9 +262,19 @@ async function fbSet(data) {
 }
 
 function mergeCache(val) {
-  if (!val) val = emptyClean();
+  if (!val || typeof val !== 'object') val = emptyClean();
   let e = emptyClean();
-  Object.keys(e).forEach(k => { if (val[k] === undefined) val[k] = e[k]; });
+  Object.keys(e).forEach(k => {
+    const def = e[k];
+    const cur = val[k];
+    if (cur === undefined || cur === null) {
+      val[k] = def;
+    } else if (Array.isArray(def) && !Array.isArray(cur)) {
+      val[k] = [];
+    } else if (!Array.isArray(def) && typeof def === 'object' && typeof cur !== 'object') {
+      val[k] = def;
+    }
+  });
   return val;
 }
 
@@ -456,9 +466,15 @@ function goTab(id){
   render(id);
 }
 function render(id){
-  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,truckStats:pageTruckStats,print:pagePrint};
-  document.getElementById('content').innerHTML=(map[id]||pageDash)();
-  if(id==='marker')startClock();
+  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,truckStats:(typeof pageTruckStats==='function'?pageTruckStats:pageToday),print:pagePrint};
+  try{
+    document.getElementById('content').innerHTML=(map[id]||pageDash)();
+    if(id==='marker')startClock();
+  }catch(e){
+    console.error(e);
+    document.getElementById('content').innerHTML='<div class="empty"><b>?????? ???????? ???????</b><br><span class="small">???????? ????????. ???? ???????????, ????????? ?????? Firebase.</span></div>';
+    toast('?????? ???????? ???????: '+e.message,'err');
+  }
 }
 
 /* ---- DASH ---- */
@@ -924,6 +940,24 @@ function pageTrips(){
     +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Материал</th><th>м³</th><th class="hide-mob">Направление</th><th class="hide-mob">Км</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
 }
 function delTrip(id){if(!confirm('Удалить рейс?'))return;let d=load();d.trips=d.trips.filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
+
+function pageTruckStats(){
+  let d=load();
+  let rows=d.trucks.map(t=>{
+    let trips=d.trips.filter(x=>x.truckId===t.id);
+    let fuel=d.dieselOut.filter(x=>x.truckId===t.id).reduce((s,x)=>s+(+x.liters||0),0);
+    let m3=trips.reduce((s,x)=>s+(+x.m3||0),0);
+    let last=trips.slice().sort((a,b)=>b.ts-a.ts)[0];
+    return '<tr><td><b class="plate">'+esc(t.plate)+'</b><div class="small">'+esc(t.driver)+'</div></td>'
+      +'<td class="hide-mob">'+esc(contractor(d,t.contractorId))+'</td>'
+      +'<td class="num">'+trips.length+'</td>'
+      +'<td class="num">'+fmt(m3)+' ??</td>'
+      +'<td class="num">'+fmt(fuel)+' ?</td>'
+      +'<td class="hide-mob">'+(last?esc(last.date):'?')+'</td></tr>';
+  }).join('')||'<tr><td colspan="6"><div class="empty">?????????? ???</div></td></tr>';
+  return '<div class="title">?? ??????????</div><div class="hint">?????? ?? ?????? ? ????????? ??????.</div>'
+    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>????????</th><th class="hide-mob">?????????</th><th>??????</th><th>??</th><th>??????</th><th class="hide-mob">????????? ????</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
+}
 
 /* ---- TODAY ---- */
 function pageToday(){
