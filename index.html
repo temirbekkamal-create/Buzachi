@@ -430,10 +430,10 @@ function logout(){
 }
 
 const TABS={
-  admin:[['dash','📊 Дашборд'],['money','💰 Расчёты'],['trips','📋 Рейсы'],['truckStats','🚛 По самосвалам'],['norms','📐 Нормы'],['warehouses','🏚 Склады'],['dieselAdmin','⛽ Дизель'],['trucks','🚛 Самосвалы'],['spectech','🚜 Спецтехника'],['contractors','🤝 Подрядчики'],['objects','📍 Объекты'],['quarries','⛰ Карьеры'],['routes','🛣 Маршруты'],['status','🛠 Статус'],['ppReport','🍽 ПП'],['users','👥 Пользователи'],['online','🟢 Онлайн'],['print','🖨️ Печать']],
-  otmet:[['marker','✅ Отметить'],['today','📋 Сводка'],['truckStats','🚛 По самосвалам']],
-  master:[['marker','🏗 Отметить'],['norms','📐 Нормы'],['specHours','⏱ Часы'],['status','🛠 Статус'],['warehouses','🏚 Склады'],['pp','🍽 ПП'],['today','📋 Сводка'],['trips','📋 Рейсы'],['trucks','🚛 Самосвалы']],
-  prorab:[['marker','✏️ Отметить'],['norms','📐 Нормы'],['specHours','⏱ Часы'],['status','🛠 Статус'],['pp','🍽 ПП'],['today','📋 Сводка'],['trips','📋 Рейсы'],['truckStats','🚛 По самосвалам']],
+  admin:[['dash','📊 Дашборд'],['money','💰 Расчёты'],['trips','📋 Рейсы'],['norms','📐 Нормы'],['warehouses','🏚 Склады'],['dieselAdmin','⛽ Дизель'],['trucks','🚛 Самосвалы'],['spectech','🚜 Спецтехника'],['contractors','🤝 Подрядчики'],['objects','📍 Объекты'],['quarries','⛰ Карьеры'],['routes','🛣 Маршруты'],['status','🛠 Статус'],['ppReport','🍽 ПП'],['users','👥 Пользователи'],['online','🟢 Онлайн'],['print','🖨️ Печать']],
+  otmet:[['marker','✅ Отметить'],['today','📋 Сводка']],
+  master:[['marker','🏗 Отметить'],['specHours','⏱ Часы'],['status','🛠 Статус'],['warehouses','🏚 Склады'],['today','📋 Сводка']],
+  prorab:[['marker','✏️ Отметить'],['norms','📐 Нормы'],['specHours','⏱ Часы'],['status','🛠 Статус'],['pp','🍽 ПП'],['today','📋 Сводка'],['trips','📋 Рейсы']],
   fueler:[['dieselIssue','⛽ Выдача'],['specFuelIssue','🚜 Спецтехника'],['fuelLog','📋 Журнал']]
 };
 function buildTabs(){
@@ -449,7 +449,7 @@ function goTab(id){
   render(id);
 }
 function render(id){
-  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,truckStats:pageTruckStats,print:pagePrint};
+  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,print:pagePrint};
   document.getElementById('content').innerHTML=(map[id]||pageDash)();
   if(id==='marker')startClock();
 }
@@ -799,32 +799,10 @@ function fuelLogTable(d,myOnly){
   let arr=d.dieselOut.slice().reverse();
   if(myOnly)arr=arr.filter(x=>x.by===CU.login);
   let canDel=CU.role==='admin';
-  let canEdit=CU.role==='admin'||CU.role==='prorab'||CU.role==='master';
-  let rows=arr.map(f=>'<tr>'
-    +'<td>'+dateTime(f.ts)+'</td>'
-    +'<td><b class="plate">'+esc(f.plate)+'</b><div class="small">'+esc(f.driver)+'</div></td>'
-    +'<td>'+esc(contractor(d,f.contractorId))+'</td>'
-    +'<td class="num bad">-'+fmt(f.liters)+' л</td>'
-    +'<td class="hide-mob">'+esc(f.comment||'—')+'</td>'
-    +'<td style="white-space:nowrap">'
-    +(canEdit?'<button class="btn btn-ghost btn-sm" data-id="'+f.id+'" onclick="editFuelById(this)">✏️</button> ':'')
-    +(canDel?'<button class="btn btn-red btn-sm" data-id="'+f.id+'" onclick="delFuelById(this)">✕</button>':'')
-    +'</td>'
-    +'</tr>').join('')||'<tr><td colspan="6"><div class="empty">Выдач нет</div></td></tr>';
-  return '<div class="panel"><div class="ph"><div class="pt">Журнал выдачи дизеля</div></div>'
-    +tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Подрядчик</th><th>Литры</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')
-    +'</div>';
+  let rows=arr.map(f=>'<tr><td>'+dateTime(f.ts)+'</td><td><b class="plate">'+esc(f.plate)+'</b><div class="small">'+esc(f.driver)+'</div></td><td class="num bad">-'+fmt(f.liters)+' л</td><td class="hide-mob">'+esc(f.comment||'—')+'</td><td>'+(canDel?'<button class="btn btn-red btn-sm" onclick="delDieselOut(\''+f.id+'\')">✕</button>':'')+'</td></tr>').join('')||'<tr><td colspan="5"><div class="empty">Выдач нет</div></td></tr>';
+  return '<div class="panel"><div class="ph"><div class="pt">Журнал выдачи</div></div>'+tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Литры</th><th class="hide-mob">Комментарий</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
 }
 function pageFuelLog(){return '<div class="title">Журнал дизеля</div>'+fuelLogTable(load(),true)}
-function delFuelById(btn){if(!confirm('Удалить?'))return;let d=load();d.dieselOut=d.dieselOut.filter(x=>x.id!==btn.dataset.id);if(save(d)){toast('Удалено');render(activeTab)}}
-function editFuelById(btn){
-  let d=load(),f=get(d.dieselOut,btn.dataset.id);if(!f)return;
-  let nLit=prompt('Литры (было '+f.liters+'):',f.liters);if(nLit===null)return;
-  let nDate=prompt('Дата (было '+f.date+'):',f.date);if(nDate===null)return;
-  let v=+nLit;if(v<=0)return toast('Неверно','err');
-  f.liters=v;f.date=nDate;f.editBy=CU.login;f.editTs=Date.now();
-  if(save(d)){toast('Изменено');render(activeTab)}
-}
 function delDieselOut(id){if(!confirm('Удалить?'))return;let d=load();d.dieselOut=d.dieselOut.filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
 
 /* ---- PP ---- */
@@ -1758,33 +1736,7 @@ const PRESENCE_URL='https://buzachi-29b84-default-rtdb.europe-west1.firebasedata
 let _presenceTimer=null;
 function writePresence(u){if(_presenceTimer)clearInterval(_presenceTimer);let ping=()=>fetch(PRESENCE_URL+'/'+u.login+'.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:u.name,role:u.role,login:u.login,ts:Date.now()})}).catch(()=>{});ping();_presenceTimer=setInterval(ping,30000);}
 function removePresence(){if(_presenceTimer){clearInterval(_presenceTimer);_presenceTimer=null}if(CU)fetch(PRESENCE_URL+'/'+CU.login+'.json',{method:'DELETE'}).catch(()=>{});}
-function pageOnline(){
-  // Return placeholder immediately, fill async
-  setTimeout(async function(){
-    var wrap=document.getElementById('onlineContent');
-    if(!wrap)return;
-    var data={};
-    try{var r=await fetch(PRESENCE_URL+'.json');if(r.ok)data=await r.json()||{};}catch(e){}
-    var now=Date.now();
-    var icons={admin:'👑',otmet:'✅',master:'🏗',prorab:'✏️',fueler:'⛽'};
-    var users=Object.values(data).filter(function(u){return now-u.ts<120000;}).sort(function(a,b){return a.name.localeCompare(b.name);});
-    var rows=users.map(function(u){
-      var ago=Math.round((now-u.ts)/1000);
-      var agoStr=ago<60?ago+'с назад':Math.round(ago/60)+'мин назад';
-      return '<tr><td>'+(icons[u.role]||'👤')+' <b>'+esc(u.name)+'</b></td>'
-        +'<td><span class="badge b-green">'+(ROLE_NAMES[u.role]||u.role)+'</span></td>'
-        +'<td class="small">'+agoStr+'</td></tr>';
-    }).join('');
-    if(!rows)rows='<tr><td colspan="3"><div class="empty">Никого нет онлайн</div></td></tr>';
-    wrap.innerHTML=tbl('<table class="tbl"><thead><tr><th>Пользователь</th><th>Роль</th><th>Активность</th></tr></thead><tbody>'+rows+'</tbody></table>');
-  },50);
-  return '<div class="title">🟢 Кто онлайн</div>'
-    +'<div class="hint">Активные за последние 2 мин.</div>'
-    +'<div class="panel"><div class="ph"><div class="pt">Сейчас на сайте</div>'
-    +'<button class="btn btn-ghost btn-sm" onclick="render(activeTab)">🔄 Обновить</button></div>'
-    +'<div id="onlineContent"><div class="empty">Загрузка...</div></div>'
-    +'</div>';
-}
+async function pageOnline(){let data={};try{let r=await fetch(PRESENCE_URL+'.json');if(r.ok)data=await r.json()||{};}catch(e){}let now=Date.now(),icons={admin:'👑',otmet:'✅',master:'🏗',prorab:'✏️',fueler:'⛽'};let users=Object.values(data).filter(u=>now-u.ts<120000).sort((a,b)=>a.name.localeCompare(b.name));let rows=users.map(u=>{let ago=Math.round((now-u.ts)/1000);return '<tr><td>'+(icons[u.role]||'👤')+' <b>'+esc(u.name)+'</b></td><td><span class="badge b-green">'+(ROLE_NAMES[u.role]||u.role)+'</span></td><td class="small">'+(ago<60?ago+'с назад':Math.round(ago/60)+'мин назад')+'</td></tr>';}).join('')||'<tr><td colspan="3"><div class="empty">Никого нет</div></td></tr>';return '<div class="title">🟢 Кто онлайн</div><div class="hint">Активные за последние 2 мин.</div><div class="panel"><div class="ph"><div class="pt">Сейчас на сайте</div><span class="badge b-green">'+users.length+'</span><button class="btn btn-ghost btn-sm" onclick="render(activeTab)">🔄 Обновить</button></div>'+tbl('<table class="tbl"><thead><tr><th>Пользователь</th><th>Роль</th><th>Активность</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';}
 // Firebase handles initial data load via dbSubscribe()
 </script>
 </body>
