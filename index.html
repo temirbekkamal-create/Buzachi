@@ -188,7 +188,7 @@ button,input,select,textarea{font-family:inherit;font-size:15px}
 const MAT_VOL={'Грунт':17,'ПГС':15};
 const ROLE_NAMES={admin:'Админ',otmet:'Отметчик',master:'Мастер',prorab:'Прораб',fueler:'Заправщик'};
 // Default admin — always works even if Firebase is empty
-const DEFAULT_ADMIN={id:'admin',login:'admin',name:'Администратор',role:'admin'};
+const DEFAULT_ADMIN={id:'admin',login:'admin',pass:'admin123',name:'Администратор',role:'admin'};
 let CU=null,activeTab='',selTruck='',calcMonth=new Date().toISOString().slice(0,7),clockTimer=null;
 
 function uid(){return Date.now()+'_'+Math.random().toString(36).slice(2,8)}
@@ -198,16 +198,6 @@ function fmt(n){return (+n||0).toLocaleString('ru-RU',{maximumFractionDigits:2})
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function time(ts){return new Date(ts).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 function dateTime(ts){return new Date(ts).toLocaleString('ru-RU')}
-async function sha256(s){
-  const bytes=new TextEncoder().encode(String(s));
-  const hash=await crypto.subtle.digest('SHA-256',bytes);
-  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-async function passwordMatches(u,p){
-  if(u.passHash)return u.passHash===await sha256(p);
-  if(u.pass)return u.pass===p;
-  return false;
-}
 
 // emptyClean — чистая структура без демо-данных (для Firebase)
 function emptyClean(){
@@ -238,6 +228,9 @@ function empty(){
 
 // ── Firebase REST API (без SDK) ──────────────────────────────
 const FB_URL = 'https://buzachi-29b84-default-rtdb.europe-west1.firebasedatabase.app/buzachi.json';
+const FB_TRIPS_URL = 'https://buzachi-29b84-default-rtdb.europe-west1.firebasedatabase.app/buzachi/trips.json';
+const FB_PERIODS_URL = 'https://buzachi-29b84-default-rtdb.europe-west1.firebasedatabase.app/buzachi/periods.json';
+let _saveTimer = null;
 
 let _cache = null;
 let _pollTimer = null;
@@ -262,18 +255,15 @@ async function fbSet(data) {
 }
 
 function mergeCache(val) {
-  if (!val || typeof val !== 'object') val = emptyClean();
+  if (!val) val = emptyClean();
   let e = emptyClean();
-  Object.keys(e).forEach(k => {
-    const def = e[k];
-    const cur = val[k];
-    if (cur === undefined || cur === null) {
-      val[k] = def;
-    } else if (Array.isArray(def) && !Array.isArray(cur)) {
-      val[k] = [];
-    } else if (!Array.isArray(def) && typeof def === 'object' && typeof cur !== 'object') {
-      val[k] = def;
+  Object.keys(e).forEach(k => { if (val[k] === undefined) val[k] = e[k]; });
+  // Firebase POST stores items as {"-key": item} objects — convert to arrays
+  ['trips','periods'].forEach(function(key) {
+    if (val[key] && !Array.isArray(val[key])) {
+      val[key] = Object.values(val[key]);
     }
+    if (!Array.isArray(val[key])) val[key] = [];
   });
   return val;
 }
@@ -284,6 +274,7 @@ function dbSubscribe() {
     val = mergeCache(val);
     _cache = val;
     buildTabs();
+    checkDataSize(val);
     // If empty, save clean structure
     if (!val.contractors || val.contractors.length === 0) {
       fbSet(val);
@@ -330,10 +321,13 @@ function save(d) {
   _lastSaveTime = Date.now();
   const dot = document.getElementById('syncDot');
   if (dot) dot.style.background = '#FF9800';
-  fbSet(d).then(ok => {
-    if (dot) dot.style.background = ok ? '#4CAF50' : '#F44336';
-    if (!ok) toast('Ошибка сохранения — проверьте интернет', 'err');
-  });
+  if (typeof _saveTimer !== 'undefined' && _saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(function() {
+    fbSet(_cache).then(ok => {
+      if (dot) dot.style.background = ok ? '#4CAF50' : '#F44336';
+      if (!ok) toast('Ошибка сохранения', 'err');
+    });
+  }, 600);
   return true;
 }
 function toast(msg,type){
@@ -384,7 +378,7 @@ function whBalance(d){
   return b;
 }
 
-async function doLogin(){
+function doLogin(){
   let l=document.getElementById('login').value.trim(),
       p=document.getElementById('pass').value;
   if(!l||!p){
@@ -395,21 +389,24 @@ async function doLogin(){
   let btn=document.querySelector('#auth .btn-main');
   btn.textContent='Вход...';btn.disabled=true;
 
+  // Always check default admin first — no Firebase needed
+  if(l===DEFAULT_ADMIN.login && p===DEFAULT_ADMIN.pass){
+    finishLogin(DEFAULT_ADMIN); return;
+  }
+
   // Fetch with timeout 8 seconds
   let timer=setTimeout(()=>{
     showAuthErr('Сервер не отвечает (таймаут). Проверьте интернет.');
   },8000);
 
-  fbGet().then(async data=>{
+  fbGet().then(data=>{
     clearTimeout(timer);
     const users=data&&data.users?data.users:[];
-    let u=users.find(x=>x.login===l&&x.active!==false);
-    if(u && !(await passwordMatches(u,p))) u=null;
+    const u=users.find(x=>x.login===l&&x.pass===p&&x.active!==false);
     if(!u){
       showAuthErr('Неверный логин или пароль');
       return;
     }
-    if(u.pass&&!u.passHash){u.passHash=await sha256(p);delete u.pass;save(data);}
     finishLogin(u);
   }).catch(err=>{
     clearTimeout(timer);
@@ -466,15 +463,9 @@ function goTab(id){
   render(id);
 }
 function render(id){
-  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,truckStats:(typeof pageTruckStats==='function'?pageTruckStats:pageToday),print:pagePrint};
-  try{
-    document.getElementById('content').innerHTML=(map[id]||pageDash)();
-    if(id==='marker')startClock();
-  }catch(e){
-    console.error(e);
-    document.getElementById('content').innerHTML='<div class="empty"><b>Ошибка загрузки раздела</b><br><span class="small">Обновите страницу. Если повторяется, проверьте данные Firebase.</span></div>';
-    toast('Ошибка загрузки раздела: '+e.message,'err');
-  }
+  let map={dash:pageDash,money:pageMoney,trips:pageTrips,norms:pageNorms,warehouses:pageWarehouses,dieselAdmin:pageDieselAdmin,dieselIssue:pageDieselIssue,fuelLog:pageFuelLog,trucks:pageTrucks,spectech:pageSpectech,specHours:pageSpecHours,specFuelIssue:pageSpecFuelIssue,contractors:pageContractors,objects:pageObjects,quarries:pageQuarries,routes:pageRoutes,status:pageStatus,pp:pagePP,ppReport:pagePPReport,marker:pageMarker,today:pageToday,users:pageUsers,online:pageOnline,truckStats:pageTruckStats,print:pagePrint};
+  document.getElementById('content').innerHTML=(map[id]||pageDash)();
+  if(id==='marker')startClock();
 }
 
 /* ---- DASH ---- */
@@ -488,7 +479,8 @@ function pageDash(){
   td.forEach(t=>{let c=contractor(d,t.contractorId);if(!by[c])by[c]={r:0,g:0,p:0,m:0};by[c].r++;by[c].m+=+t.m3||0;if(t.material==='Грунт')by[c].g+=+t.m3||0;else by[c].p+=+t.m3||0});
   let rows=Object.keys(by).map(c=>'<tr><td><b>'+esc(c)+'</b></td><td class="num">'+by[c].r+'</td><td class="num hide-mob">'+fmt(by[c].g)+'</td><td class="num hide-mob">'+fmt(by[c].p)+'</td><td class="num blue">'+fmt(by[c].m)+' м³</td></tr>').join('')||'<tr><td colspan="5"><div class="empty">Сегодня рейсов нет</div></td></tr>';
   return '<div class="title">Дашборд</div><div class="hint">'+new Date().toLocaleDateString('ru-RU',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+'</div>'
-    +'<div class="stats"><div class="stat"><div class="l">Рейсов</div><div class="v">'+td.length+'</div></div><div class="stat"><div class="l">Грунт</div><div class="v">'+fmt(gr)+' м³</div></div><div class="stat"><div class="l">ПГС</div><div class="v">'+fmt(pg)+' м³</div></div><div class="stat"><div class="l">Дизель ост.</div><div class="v">'+fmt(dieselRest(d))+' л</div></div><div class="stat"><div class="l">На линии</div><div class="v">'+line+'</div></div><div class="stat"><div class="l">В ремонте</div><div class="v">'+rep+'</div></div></div>'
+    
+    +(CU.role==='admin'?'<div class="panel" style="border-left:4px solid var(--red);margin-bottom:12px"><div class="pb" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px"><div><div style="font-weight:900">🗄️ Управление данными</div><div class="small" id="dataSizeInfo">Размер базы: считывается...</div></div><button class="btn btn-red btn-sm" onclick="archiveOldTrips()">Архив > 30 дней</button></div></div>':'')+'<div class="stats"><div class="stat"><div class="l">Рейсов</div><div class="v">'+td.length+'</div></div><div class="stat"><div class="l">Грунт</div><div class="v">'+fmt(gr)+' м³</div></div><div class="stat"><div class="l">ПГС</div><div class="v">'+fmt(pg)+' м³</div></div><div class="stat"><div class="l">Дизель ост.</div><div class="v">'+fmt(dieselRest(d))+' л</div></div><div class="stat"><div class="l">На линии</div><div class="v">'+line+'</div></div><div class="stat"><div class="l">В ремонте</div><div class="v">'+rep+'</div></div></div>'
     +'<div class="panel"><div class="ph"><div class="pt">По подрядчикам сегодня</div></div>'+tbl('<table class="tbl"><thead><tr><th>Подрядчик</th><th>Рейсов</th><th class="hide-mob">Грунт м³</th><th class="hide-mob">ПГС м³</th><th>Итого м³</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
 }
 
@@ -571,7 +563,13 @@ function setStatus(id,status){let d=load(),t=get(d.trucks,id);if(!t)return;t.sta
 function setSpecStatus(id,status){let d=load(),s=get(d.spectech||[],id);if(!s)return;s.status=status;if(save(d)){toast('Статус изменён');render(activeTab)}}
 
 /* ---- MARKER SESSION ---- */
-function mKey(k){return 'sess_'+CU.login+'_'+today()+'_'+k}
+function mKey(k,objId){
+  var oid=objId||localStorage.getItem('curObj_'+CU.login)||'noobj';
+  return 'sess_'+CU.login+'_'+today()+'_'+oid+'_'+k;
+}
+function curObjId(){return localStorage.getItem('curObj_'+CU.login)||'';}
+function setCurObj(oid){localStorage.setItem('curObj_'+CU.login,oid);}
+function clearCurObj(){localStorage.removeItem('curObj_'+CU.login);}
 function sessGet(k){try{return localStorage.getItem(mKey(k))||''}catch(e){return ''}}
 function sessSet(k,v){try{localStorage.setItem(mKey(k),v)}catch(e){}}
 function sessClear(){['mat','src'].forEach(k=>{try{localStorage.removeItem(mKey(k))}catch(e){}})}
@@ -621,79 +619,89 @@ function markerWhTrip(){
   let mat=document.getElementById('mwMat').value;
   if(!tr)return toast('Выберите самосвал','err');
   let rt=ensureRoute(d,'quarry',q,'warehouse',w);
-  d.trips.push({id:uid(),ts:Date.now(),date:today(),truckId:tr.id,plate:tr.plate,driver:tr.driver,contractorId:tr.contractorId,material:mat,m3:MAT_VOL[mat],fromType:'quarry',fromId:q,toType:'warehouse',toId:w,routeKey:rt.key,by:CU.login});
-  if(save(d)){toast('Рейс на склад записан ✓ — '+tr.plate);render(activeTab)}
+  let trip={id:uid(),ts:Date.now(),date:today(),truckId:tr.id,plate:tr.plate,driver:tr.driver,
+    contractorId:tr.contractorId,material:mat,m3:MAT_VOL[mat],
+    fromType:'quarry',fromId:q,toType:'warehouse',toId:w,routeKey:rt.key,by:CU.login};
+  addTripAtomic(trip, d, tr.plate);
 }
 
 function pageMarker(){
   let d=load();
-  // Work mode: 'object' or 'warehouse'
-  let wmode=localStorage.getItem('wmode_'+CU.login)||'obj';
 
-  // Step 0: choose work mode
+  // Step 0: work mode (object or warehouse)
   let modeKey='mmode_'+CU.login;
   if(!localStorage.getItem(modeKey)){
-    return '<div class="title">Где работаете?</div><div class="hint">Выберите режим работы на сегодня</div>'
+    return '<div class="title">Где работаете?</div><div class="hint">Выберите режим работы</div>'
       +'<div class="matgrid" style="margin-top:8px">'
       +'<button class="mat" onclick="setWorkMode(&apos;obj&apos;)" style="padding:20px;font-size:16px">📍 Площадка<br><span class="small">Отметка рейсов на объект</span></button>'
       +'<button class="mat" onclick="setWorkMode(&apos;wh&apos;)" style="padding:20px;font-size:16px">🏚 Склад<br><span class="small">Приход на склад</span></button>'
       +'</div>';
   }
 
-  wmode=localStorage.getItem('wmode_'+CU.login)||'obj';
+  let wmode=localStorage.getItem('wmode_'+CU.login)||'obj';
+  if(wmode==='wh') return pageMarkerWarehouse(d);
 
-  // Warehouse mode
-  if(wmode==='wh'){
-    return pageMarkerWarehouse(d);
+  // Step 1: choose object (can change anytime)
+  let curObj=curObjId();
+  let obj=curObj?get(d.objects,curObj):null;
+
+  // Object selector (always visible at top)
+  let objOpts=d.objects.map(o=>'<option value="'+o.id+'"'+(o.id===curObj?' selected':'')+'>'+esc(o.name)+'</option>').join('');
+  let objPanel='<div class="panel"><div class="pb" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    +'<div style="flex:1"><div class="small">Текущий объект</div>'
+    +'<select id="objPicker" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:10px;font-size:15px;font-weight:900" onchange="switchObject(this.value)">'+objOpts+'</select></div>'
+    +'<button class="btn btn-ghost btn-sm" onclick="resetWorkMode()">← Режим</button>'
+    +'</div></div>';
+
+  if(!obj){
+    return objPanel+'<div class="panel"><div class="pb"><div class="hint">Выберите объект выше для начала работы</div></div></div>';
   }
 
-  let key='object_'+CU.login,fixed=d.marker[key];
-
-  if(!fixed||!get(d.objects,fixed)){
-    let opts=d.objects.map(o=>'<option value="'+o.id+'">'+esc(o.name)+'</option>').join('');
-    return '<div class="title">Шаг 1 — Выберите объект</div><div class="hint">Выберите площадку на которой работаете сегодня.</div>'
-      +'<button class="btn btn-ghost btn-sm" style="margin-bottom:10px" onclick="resetWorkMode()">← Сменить режим</button>'
-      +'<div class="panel"><div class="pb"><div class="field"><label>Площадка</label><select id="fixedObj">'+opts+'</select></div>'
-      +'<button class="btn btn-green" style="width:100%;margin-top:4px" onclick="saveFixedObject()">Закрепить объект →</button></div></div>';
-  }
-
-  let obj=get(d.objects,fixed);
-  let sessMat=sessGet('mat'),sessSrc=sessGet('src');
+  // Step 2: session for this object
+  let sessMat=sessGet('mat');
+  let sessSrc=sessGet('src');
 
   if(!sessMat||!sessSrc){
-    let m1cls='mat'+(sessMat==='Грунт'?' sel1':''),m2cls='mat'+(sessMat==='ПГС'?' sel2':'');
-    return '<div class="panel"><div class="pb" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
-      +'<div><div class="small">Объект</div><div style="font-weight:900;font-size:16px">📍 '+esc(obj.name)+'</div></div>'
-      +'<button class="btn btn-ghost btn-sm" onclick="changeFixedObject()">Сменить</button></div></div>'
-      +'<div class="title">Шаг 2 — Настройка смены</div><div class="hint">Выберите материал и источник — зафиксируется на весь день.</div>'
-      +'<div class="panel"><div class="pb">'
+    let m1cls='mat'+(sessMat==='Грунт'?' sel1':'');
+    let m2cls='mat'+(sessMat==='ПГС'?' sel2':'');
+    // Today's trips for this object
+    let todayCount=d.trips.filter(t=>t.date===today()&&t.toType==='object'&&t.toId===curObj).length;
+    return objPanel
+      +'<div class="panel" style="border-left:4px solid var(--orange)"><div class="ph"><div class="pt">📍 '+esc(obj.name)+'</div>'
+      +(todayCount>0?'<span class="badge b-green">'+todayCount+' рейсов сегодня</span>':'')
+      +'</div><div class="pb">'
+      +'<div class="hint">Выберите материал и источник — зафиксируется для этого объекта</div>'
       +'<div class="field"><label>Что везём</label></div>'
       +'<div class="matgrid" style="margin-bottom:14px">'
-      +'<button class="'+m1cls+'" id="mat1" onclick="sessSetMat(\'Грунт\')">🪨 Грунт<br><span class="small">17 м³</span></button>'
-      +'<button class="'+m2cls+'" id="mat2" onclick="sessSetMat(\'ПГС\')">🏗️ ПГС<br><span class="small">15 м³</span></button>'
+      +'<button class="'+m1cls+'" id="mat1" onclick="sessSetMat(&apos;Грунт&apos;)">🪨 Грунт<br><span class="small">17 м³</span></button>'
+      +'<button class="'+m2cls+'" id="mat2" onclick="sessSetMat(&apos;ПГС&apos;)">🏗️ ПГС<br><span class="small">15 м³</span></button>'
       +'</div>'
       +'<div class="field"><label>Откуда везут</label><select id="srcSel">'+sourceOpts(d)+'</select></div>'
-      +'<button class="btn btn-green" style="width:100%;margin-top:10px;font-size:16px;padding:14px" onclick="saveSession()">▶ Начать смену</button>'
+      +'<button class="btn btn-green" style="width:100%;margin-top:10px;font-size:16px;padding:14px" onclick="saveSession()">▶ Начать на '+esc(obj.name)+'</button>'
       +'</div></div>';
   }
 
+  // Step 3: mark trips
   let srcParsed=parseVal(sessSrc),srcName=ent(d,srcParsed.type,srcParsed.id);
   let matBadge=sessMat==='Грунт'?'b-orange':'b-blue';
   let line=d.trucks.filter(t=>t.status==='line');
-  let todayTrips=d.trips.filter(t=>t.date===today()&&t.toType==='object'&&t.toId===fixed).sort((a,b)=>b.ts-a.ts);
-
-  let cards=line.map(t=>'<div class="truck-card" id="truck_'+t.id+'" onclick="selectTruck(\''+t.id+'\')">'
+  let todayTrips=d.trips.filter(t=>t.date===today()&&t.toType==='object'&&t.toId===curObj).sort((a,b)=>b.ts-a.ts);
+  let cards=line.map(t=>'<div class="truck-card" id="truck_'+t.id+'" onclick="selectTruck(&apos;'+t.id+'&apos;)">'
     +'<div style="font-size:22px">🚛</div>'
-    +'<div style="flex:1;min-width:0"><div class="plate">'+esc(t.plate)+'</div><div class="small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.driver)+'</div></div>'
+    +'<div style="flex:1;min-width:0"><div class="plate">'+esc(t.plate)+'</div>'
+    +'<div class="small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.driver)+'</div></div>'
     +'</div>').join('')||'<div class="empty">Нет самосвалов на линии</div>';
+  let rows=todayTrips.slice(0,50).map(t=>'<tr><td>'+time(t.ts)+'</td><td><b class="plate">'+esc(t.plate)+'</b></td>'
+    +'<td><span class="badge '+(t.material==='Грунт'?'b-orange':'b-blue')+'">'+t.material+'</span></td>'
+    +'<td class="num">'+fmt(t.m3)+'</td></tr>').join('')
+    ||'<tr><td colspan="4"><div class="empty">Рейсов нет</div></td></tr>';
 
-  let rows=todayTrips.slice(0,50).map(t=>'<tr><td>'+time(t.ts)+'</td><td><b class="plate">'+esc(t.plate)+'</b></td><td><span class="badge '+(t.material==='Грунт'?'b-orange':'b-blue')+'">'+t.material+'</span></td><td class="num">'+fmt(t.m3)+'</td></tr>').join('')||'<tr><td colspan="4"><div class="empty">Рейсов нет</div></td></tr>';
-
-  return '<div class="panel"><div class="pb" style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">'
+  return objPanel
+    +'<div class="panel"><div class="pb" style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">'
     +'<div><div class="small">Площадка</div><div style="font-weight:900;font-size:16px">📍 '+esc(obj.name)+'</div></div>'
-    +'<div style="text-align:right"><div id="clock" style="font-family:Courier New,monospace;font-size:24px;font-weight:900;letter-spacing:.05em">--:--:--</div><div class="small">'+new Date().toLocaleDateString('ru-RU')+'</div></div>'
+    +'<div style="text-align:right"><div id="clock" style="font-family:Courier New,monospace;font-size:24px;font-weight:900;letter-spacing:.05em">--:--:--</div>'
+    +'<div class="small">'+new Date().toLocaleDateString('ru-RU')+'</div></div>'
     +'</div></div>'
-
     +'<div class="sess-bar">'
     +'<div class="sess-info">'
     +'<div><div class="small">Материал</div><span class="badge '+matBadge+'" style="font-size:13px;padding:5px 12px">'+sessMat+' — '+MAT_VOL[sessMat]+' м³</span></div>'
@@ -701,18 +709,28 @@ function pageMarker(){
     +'</div>'
     +'<button class="btn btn-red btn-sm" onclick="endShift()">⛔ Завершить</button>'
     +'</div>'
-
     +'<div class="small" style="font-weight:900;text-transform:uppercase;margin-bottom:8px;color:var(--brown)">Выберите самосвал</div>'
     +'<div class="truck-list">'+cards+'</div>'
-
     +'<div class="markbox">'
     +'<button id="confirmBtn" class="btn btn-green" style="width:100%;padding:16px;font-size:17px;border-radius:12px" onclick="confirmTrip()" disabled>Выберите самосвал</button>'
     +'</div>'
-
-    +'<div class="panel"><div class="ph"><div class="pt">Рейсы сегодня</div><span class="badge b-blue">'+todayTrips.length+'</span></div>'
+    +'<div class="panel"><div class="ph"><div class="pt">Рейсы сегодня — '+esc(obj.name)+'</div><span class="badge b-blue">'+todayTrips.length+'</span></div>'
     +tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Материал</th><th>м³</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
 }
 
+function switchObject(oid){
+  if(!oid)return;
+  // Save current session first
+  let oldObj=curObjId();
+  if(oldObj&&oldObj!==oid){
+    // End session for old object
+    sessClear();
+  }
+  setCurObj(oid);
+  // Also update marker in DB for compatibility
+  let d=load();d.marker['object_'+CU.login]=oid;save(d);
+  render(activeTab);
+}
 function sessSetMat(m){
   sessSet('mat',m);
   let m1=document.getElementById('mat1'),m2=document.getElementById('mat2');
@@ -726,26 +744,35 @@ function saveSession(){
   if(!mat)return toast('Выберите материал','err');
   if(!srcEl||!srcEl.value)return toast('Выберите источник','err');
   sessSet('src',srcEl.value);
-  let d=load(),obj=d.marker['object_'+CU.login];
-  d.periods.push({id:uid(),ts:Date.now(),date:today(),objectId:obj,material:mat,action:'start',by:CU.login});
-  if(save(d)){toast('Смена начата: '+mat);render(activeTab)}
+  let obj=curObjId();
+  if(!obj)return toast('Объект не выбран','err');
+  let period={id:uid(),ts:Date.now(),date:today(),objectId:obj,material:mat,action:'start',by:CU.login};
+  fetch(FB_PERIODS_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(period)}).catch(()=>{});
+  toast('Начало на Объекте: '+mat);render(activeTab);
 }
 function endShift(){
-  if(!confirm('Завершить смену?'))return;
-  let d=load(),obj=d.marker['object_'+CU.login],mat=sessGet('mat');
-  if(obj&&mat){d.periods.push({id:uid(),ts:Date.now(),date:today(),objectId:obj,material:mat,action:'end',by:CU.login});save(d)}
-  sessClear();toast('Смена завершена');render(activeTab);
+  let d=load(),mat=sessGet('mat'),obj=curObjId()||d.marker['object_'+CU.login];
+  let objName=obj?ent(d,'object',obj):'объект';
+  if(!confirm('Завершить на '+objName+'?'))return;
+  if(obj&&mat){
+    let period={id:uid(),ts:Date.now(),date:today(),objectId:obj,material:mat,action:'end',by:CU.login};
+    fetch(FB_PERIODS_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(period)}).catch(function(){});
+  }
+  sessClear();
+  toast('Завершено. Выберите следующий объект выше.');
+  render(activeTab);
 }
 function saveFixedObject(){
   let d=load(),val=document.getElementById('fixedObj').value;
   if(!val)return toast('Выберите площадку','err');
+  setCurObj(val);
   d.marker['object_'+CU.login]=val;
   if(save(d)){toast('Объект закреплён');render(activeTab)}
 }
 function changeFixedObject(){
-  if(!confirm('Сменить объект или режим работы?'))return;
-  let d=load();d.marker['object_'+CU.login]='';sessClear();
-  if(save(d))render(activeTab);
+  sessClear();clearCurObj();
+  let d=load();d.marker['object_'+CU.login]='';
+  save(d);render(activeTab);
 }
 function startClock(){let tick=()=>{let e=document.getElementById('clock');if(e)e.textContent=new Date().toLocaleTimeString('ru-RU')};tick();clockTimer=setInterval(tick,1000)}
 function selectTruck(id){
@@ -756,14 +783,54 @@ function selectTruck(id){
   if(b){let mat=sessGet('mat');b.disabled=false;b.textContent='✓ Отметить рейс — '+mat+' '+MAT_VOL[mat]+' м³'}
 }
 function confirmTrip(){
-  let d=load(),obj=d.marker['object_'+CU.login],tr=get(d.trucks,selTruck);
+  let d=load(),obj=curObjId()||d.marker['object_'+CU.login],tr=get(d.trucks,selTruck);
   let mat=sessGet('mat'),src=sessGet('src');
   if(!tr)return toast('Выберите самосвал','err');
   if(!mat||!src)return toast('Нет настроек смены','err');
   if(!obj)return toast('Нет объекта','err');
+  // Disable button to prevent double-tap
+  let btn=document.getElementById('confirmBtn');
+  if(btn){btn.disabled=true;btn.textContent='Сохранение...';}
   let srcP=parseVal(src),rt=ensureRoute(d,srcP.type,srcP.id,'object',obj);
-  d.trips.push({id:uid(),ts:Date.now(),date:today(),truckId:tr.id,plate:tr.plate,driver:tr.driver,contractorId:tr.contractorId,material:mat,m3:MAT_VOL[mat],fromType:srcP.type,fromId:srcP.id,toType:'object',toId:obj,routeKey:rt.key,by:CU.login});
-  if(save(d)){toast('Рейс записан ✓ — '+tr.plate);selTruck='';render(activeTab)}
+  let trip={id:uid(),ts:Date.now(),date:today(),truckId:tr.id,plate:tr.plate,
+    driver:tr.driver,contractorId:tr.contractorId,material:mat,m3:MAT_VOL[mat],
+    fromType:srcP.type,fromId:srcP.id,toType:'object',toId:obj,
+    routeKey:rt.key,by:CU.login};
+  // Use atomic POST — each trip saved independently, no race condition
+  addTripAtomic(trip, d, tr.plate);
+}
+
+function addTripAtomic(trip, d, plateName) {
+  // POST to Firebase creates unique child key atomically
+  fetch(FB_TRIPS_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(trip)
+  }).then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(res) {
+    // Also update local cache
+    if (_cache && _cache.trips) {
+      _cache.trips.push(trip);
+    }
+    // Ensure route is saved (routes don't change often)
+    if (d) {
+      var dFresh = load();
+      ensureRoute(dFresh, trip.fromType, trip.fromId, trip.toType, trip.toId);
+      // Save routes/marker separately (not trips — already saved atomically)
+      var slim = Object.assign({}, dFresh);
+      slim.trips = dFresh.trips; // keep existing trips in cache
+      save(dFresh);
+    }
+    toast('Рейс записан ✓ — ' + plateName);
+    selTruck = '';
+    render(activeTab);
+  }).catch(function(err) {
+    toast('Ошибка: ' + err.message, 'err');
+    let btn = document.getElementById('confirmBtn');
+    if (btn) { btn.disabled = false; btn.textContent = '✓ Отметить рейс'; }
+  });
 }
 
 /* ---- WAREHOUSES ---- */
@@ -789,8 +856,18 @@ function addWarehouseMove(){
   if(!tr)return toast('Выберите самосвал','err');
   if(cnt<=0)return toast('Введите кол-во','err');
   let rt=ensureRoute(d,'quarry',q,'warehouse',w);
-  for(let i=0;i<cnt;i++)d.trips.push({id:uid(),ts:Date.now()+i,date:today(),truckId:tr.id,plate:tr.plate,driver:tr.driver,contractorId:tr.contractorId,material:mat,m3:MAT_VOL[mat],fromType:'quarry',fromId:q,toType:'warehouse',toId:w,routeKey:rt.key,by:CU.login});
-  if(save(d)){toast('Приход записан');render(activeTab)}
+  let promises=[];
+  for(let i=0;i<cnt;i++){
+    let trip={id:uid(),ts:Date.now()+i*1000,date:today(),truckId:tr.id,plate:tr.plate,
+      driver:tr.driver,contractorId:tr.contractorId,material:mat,m3:MAT_VOL[mat],
+      fromType:'quarry',fromId:q,toType:'warehouse',toId:w,routeKey:rt.key,by:CU.login};
+    promises.push(fetch(FB_TRIPS_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(trip)}).then(r=>r.ok));
+  }
+  Promise.all(promises).then(function(results){
+    let ok=results.filter(Boolean).length;
+    toast('Добавлено '+ok+' рейсов на склад');
+    render(activeTab);
+  });
 }
 
 /* ---- DIESEL ---- */
@@ -936,56 +1013,74 @@ function pageTrips(){
         +'<td class="num hide-mob">'+(km?fmt(km):'<span class="badge b-yellow">—</span>')+'</td>'
         +'<td>'+(canDel?'<button class="btn btn-red btn-sm" onclick="delTrip(\''+t.id+'\')">✕</button>':'')+'</td></tr>';
     }).join('')||'<tr><td colspan="7"><div class="empty">Рейсов нет</div></td></tr>';
+  var isEdit = CU.role==='admin' || CU.role==='prorab' || CU.role==='master';
+  var addTripForm = '';
+  if (isEdit) {
+    var trOpts2 = d.trucks.map(function(t){ return '<option value="'+t.id+'">'+esc(t.plate)+' — '+esc(t.driver)+'</option>'; }).join('');
+    addTripForm = '<div class="panel" style="border-left:4px solid var(--blue)"><div class="ph"><div class="pt">➕ Добавить рейсы за прошедший день</div><div class="small">Прораб и мастер могут добавить забытые рейсы</div></div><div class="pb"><div class="grid">'
+      + '<div class="field"><label>Дата</label><input id="mtDate" type="date" value="'+today()+'"></div>'
+      + '<div class="field"><label>Самосвал</label><select id="mtTruck">'+trOpts2+'</select></div>'
+      + '<div class="field"><label>Материал</label><select id="mtMat"><option value="Грунт">Грунт (17 м³)</option><option value="ПГС">ПГС (15 м³)</option></select></div>'
+      + '<div class="field"><label>Откуда</label><select id="mtFrom">'+sourceOpts(d)+'</select></div>'
+      + '<div class="field"><label>Куда</label><select id="mtTo">'+destOpts(d)+'</select></div>'
+      + '<div class="field"><label>Кол-во рейсов</label><input id="mtCount" type="number" value="1" min="1"></div>'
+      + '</div><button class="btn btn-blue" onclick="addManualTrip()">Добавить рейсы</button></div></div>';
+  }
   return '<div class="title">Все рейсы</div>'
+    +addTripForm
     +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Материал</th><th>м³</th><th class="hide-mob">Направление</th><th class="hide-mob">Км</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
 }
 function delTrip(id){if(!confirm('Удалить рейс?'))return;let d=load();d.trips=d.trips.filter(x=>x.id!==id);if(save(d)){toast('Удалено');render(activeTab)}}
-
-function pageTruckStats(){
-  let d=load();
-  const T={
-    m3:'\u043c\u00b3',
-    liter:'\u043b',
-    dash:'\u2014',
-    empty:'\u0421\u0430\u043c\u043e\u0441\u0432\u0430\u043b\u043e\u0432 \u043d\u0435\u0442',
-    title:'\u041f\u043e \u0441\u0430\u043c\u043e\u0441\u0432\u0430\u043b\u0430\u043c',
-    hint:'\u0421\u0432\u043e\u0434\u043a\u0430 \u043f\u043e \u0440\u0435\u0439\u0441\u0430\u043c \u0438 \u0432\u044b\u0434\u0430\u043d\u043d\u043e\u043c\u0443 \u0434\u0438\u0437\u0435\u043b\u044e.',
-    truck:'\u0421\u0430\u043c\u043e\u0441\u0432\u0430\u043b',
-    contractor:'\u041f\u043e\u0434\u0440\u044f\u0434\u0447\u0438\u043a',
-    trips:'\u0420\u0435\u0439\u0441\u043e\u0432',
-    diesel:'\u0414\u0438\u0437\u0435\u043b\u044c',
-    lastTrip:'\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0439 \u0440\u0435\u0439\u0441'
-  };
-  let rows=d.trucks.map(t=>{
-    let trips=d.trips.filter(x=>x.truckId===t.id);
-    let fuel=d.dieselOut.filter(x=>x.truckId===t.id).reduce((s,x)=>s+(+x.liters||0),0);
-    let m3=trips.reduce((s,x)=>s+(+x.m3||0),0);
-    let last=trips.slice().sort((a,b)=>b.ts-a.ts)[0];
-    return '<tr><td><b class="plate">'+esc(t.plate)+'</b><div class="small">'+esc(t.driver)+'</div></td>'
-      +'<td class="hide-mob">'+esc(contractor(d,t.contractorId))+'</td>'
-      +'<td class="num">'+trips.length+'</td>'
-      +'<td class="num">'+fmt(m3)+' '+T.m3+'</td>'
-      +'<td class="num">'+fmt(fuel)+' '+T.liter+'</td>'
-      +'<td class="hide-mob">'+(last?esc(last.date):T.dash)+'</td></tr>';
-  }).join('')||'<tr><td colspan="6"><div class="empty">'+T.empty+'</div></td></tr>';
-  return '<div class="title">'+T.title+'</div><div class="hint">'+T.hint+'</div>'
-    +'<div class="panel">'+tbl('<table class="tbl"><thead><tr><th>'+T.truck+'</th><th class="hide-mob">'+T.contractor+'</th><th>'+T.trips+'</th><th>'+T.m3+'</th><th>'+T.diesel+'</th><th class="hide-mob">'+T.lastTrip+'</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
-}
 
 /* ---- TODAY ---- */
 function pageToday(){
   let d=load(),arr=d.trips.filter(t=>t.date===today()).sort((a,b)=>b.ts-a.ts),
       per=d.periods.filter(p=>p.date===today()).sort((a,b)=>b.ts-a.ts);
-  let rows=arr.map(t=>'<tr><td>'+time(t.ts)+'</td><td><b class="plate">'+esc(t.plate)+'</b></td><td><span class="badge '+(t.material==='Грунт'?'b-orange':'b-blue')+'">'+t.material+'</span></td><td class="num">'+fmt(t.m3)+'</td></tr>').join('')||'<tr><td colspan="4"><div class="empty">Рейсов нет</div></td></tr>';
-  let prow=per.map(p=>'<tr><td>'+time(p.ts)+'</td><td>'+esc(ent(d,'object',p.objectId))+'</td><td><span class="badge '+(p.material==='Грунт'?'b-orange':'b-blue')+'">'+p.material+'</span></td><td><b>'+(p.action==='start'?'▶ Начало':'⏹ Конец')+'</b></td></tr>').join('')||'<tr><td colspan="4"><div class="empty">Нет</div></td></tr>';
+
+  // Group by truck with route details
+  let byTruck={};
+  arr.forEach(t=>{
+    if(!byTruck[t.truckId])byTruck[t.truckId]={plate:t.plate,driver:t.driver,trips:[],m3:0};
+    byTruck[t.truckId].trips.push(t);
+    byTruck[t.truckId].m3+=+t.m3||0;
+  });
+
+  let truckCards=Object.values(byTruck).sort((a,b)=>b.trips.length-a.trips.length).map(tr=>{
+    // Group by route within truck
+    let routeMap={};
+    tr.trips.forEach(t=>{
+      let rk=t.fromType+'|'+t.fromId+'|'+t.toType+'|'+t.toId+'|'+t.material;
+      if(!routeMap[rk])routeMap[rk]={from:ent(d,t.fromType,t.fromId),to:ent(d,t.toType,t.toId),mat:t.material,cnt:0,m3:0};
+      routeMap[rk].cnt++;routeMap[rk].m3+=+t.m3||0;
+    });
+    let routeRows=Object.values(routeMap).map(r=>'<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #f0f0f0">'
+      +'<span class="badge '+(r.mat==='Грунт'?'b-orange':'b-blue')+'" style="font-size:10px">'+r.mat+'</span> '
+      +esc(r.from)+' → '+esc(r.to)
+      +' <b style="float:right">'+r.cnt+' рейс · '+fmt(r.m3)+' м³</b></div>').join('');
+    return '<div class="panel" style="margin-bottom:8px"><div class="pb">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+      +'<div><b class="plate">'+esc(tr.plate)+'</b> <span class="small">'+esc(tr.driver)+'</span></div>'
+      +'<div><span class="badge b-blue">'+tr.trips.length+' рейсов</span> <span class="badge b-green">'+fmt(tr.m3)+' м³</span></div>'
+      +'</div>'+routeRows+'</div></div>';
+  }).join('')||'<div class="empty">Рейсов нет</div>';
+
+  let prow=per.map(p=>'<tr><td>'+time(p.ts)+'</td><td>'+esc(ent(d,'object',p.objectId))+'</td>'
+    +'<td><span class="badge '+(p.material==='Грунт'?'b-orange':'b-blue')+'">'+p.material+'</span></td>'
+    +'<td><b>'+(p.action==='start'?'▶ Начало':'⏹ Конец')+'</b></td></tr>').join('')
+    ||'<tr><td colspan="4"><div class="empty">Нет</div></td></tr>';
+
   return '<div class="title">Сводка за день</div>'
-    +'<div class="stats"><div class="stat"><div class="l">Рейсов</div><div class="v">'+arr.length+'</div></div><div class="stat"><div class="l">Грунт</div><div class="v">'+fmt(arr.filter(t=>t.material==='Грунт').reduce((s,t)=>s+(+t.m3||0),0))+' м³</div></div><div class="stat"><div class="l">ПГС</div><div class="v">'+fmt(arr.filter(t=>t.material==='ПГС').reduce((s,t)=>s+(+t.m3||0),0))+' м³</div></div></div>'
-    +'<div class="panel"><div class="ph"><div class="pt">Рейсы</div><span class="badge b-blue">'+arr.length+'</span></div>'+tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Материал</th><th>м³</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>'
-    +'<div class="panel"><div class="ph"><div class="pt">Начало / конец</div></div>'+tbl('<table class="tbl"><thead><tr><th>Время</th><th>Объект</th><th>Материал</th><th>Действие</th></tr></thead><tbody>'+prow+'</tbody></table>')+'</div>';
+    +'<div class="stats"><div class="stat"><div class="l">Рейсов</div><div class="v">'+arr.length+'</div></div>'
+    +'<div class="stat"><div class="l">Грунт</div><div class="v">'+fmt(arr.filter(t=>t.material==='Грунт').reduce((s,t)=>s+(+t.m3||0),0))+' м³</div></div>'
+    +'<div class="stat"><div class="l">ПГС</div><div class="v">'+fmt(arr.filter(t=>t.material==='ПГС').reduce((s,t)=>s+(+t.m3||0),0))+' м³</div></div>'
+    +'<div class="stat"><div class="l">Самосвалов</div><div class="v">'+Object.keys(byTruck).length+'</div></div></div>'
+    +'<div class="title" style="font-size:16px;margin-bottom:8px">🚛 По каждому самосвалу</div>'
+    +truckCards
+    +'<div class="panel"><div class="ph"><div class="pt">Начало / конец завоза</div></div>'
+    +tbl('<table class="tbl"><thead><tr><th>Время</th><th>Объект</th><th>Материал</th><th>Действие</th></tr></thead><tbody>'+prow+'</tbody></table>')
+    +'</div>';
 }
 
-/* ---- MONEY ---- */
-function cRate(d,cid,key){let con=get(d.contractors,cid);if(con&&con.rates&&con.rates[key]!==undefined&&con.rates[key]!=='')return +con.rates[key];return +d.prices[key]||0;}
 function contractorCalc(d,cid,m){
   let gross=0,missing=0,trips=0,m3=0;
   d.trips.filter(t=>t.contractorId===cid&&monthOf(t.date,m)).forEach(t=>{
@@ -1763,11 +1858,11 @@ function pageUsers(){
 
     +'<div class="panel" style="border-left:4px solid var(--orange)"><div class="pb">'
     +'<div class="small" style="font-weight:900;text-transform:uppercase;margin-bottom:6px">🔐 Системный администратор</div>'
-    +'<div class="small">Default built-in admin password is disabled. Use database users.</div>'
+    +'<div class="small">Логин: <b>admin</b> | Пароль: <b>admin123</b> — всегда работает, не удаляется</div>'
     +'</div></div>';
 }
 
-async function addUser(){
+function addUser(){
   let d=load();if(!d.users)d.users=[];
   let login=document.getElementById('uLogin').value.trim().toLowerCase(),
       pass=document.getElementById('uPass').value.trim(),
@@ -1779,7 +1874,7 @@ async function addUser(){
   if(pass.length<4)return toast('Пароль минимум 4 символа','err');
   if(!name)return toast('Введите имя','err');
   if(d.users.some(u=>u.login===login))return toast('Такой логин уже есть','err');
-  d.users.push({id:uid(),login,passHash:await sha256(pass),name,role,active:true,created:Date.now(),createdBy:CU.login});
+  d.users.push({id:uid(),login,pass,name,role,active:true,created:Date.now(),createdBy:CU.login});
   if(save(d)){toast('Пользователь добавлен: '+login);render(activeTab)}
 }
 
@@ -1789,12 +1884,12 @@ function toggleUser(id){
   if(save(d)){toast(u.active?'Пользователь активирован':'Пользователь отключён');render(activeTab)}
 }
 
-async function resetPass(id){
+function resetPass(id){
   let newp=prompt('Новый пароль (минимум 4 символа):');
   if(!newp)return;
   if(newp.length<4)return toast('Минимум 4 символа','err');
   let d=load(),u=get(d.users,id);if(!u)return;
-  u.passHash=await sha256(newp);delete u.pass;u.passChangedBy=CU.login;u.passChangedAt=Date.now();
+  u.pass=newp;u.passChangedBy=CU.login;u.passChangedAt=Date.now();
   if(save(d)){toast('Пароль изменён для '+u.login)}
 }
 
@@ -1839,6 +1934,56 @@ function pageOnline(){
     +'<div id="onlineContent"><div class="empty">Загрузка...</div></div>'
     +'</div>';
 }
+
+function checkDataSize(d) {
+  try {
+    var kb = Math.round(JSON.stringify(d).length / 1024);
+    var el = document.getElementById('dataSizeInfo');
+    if (el) el.textContent = 'Размер базы: ' + kb + ' КБ';
+    if (kb > 4000 && CU && CU.role === 'admin') {
+      toast('⚠️ База ' + kb + ' КБ — рекомендуется архивировать');
+    }
+  } catch(e) {}
+}
+
+async function archiveOldTrips() {
+  if (!confirm('Архивировать рейсы старше 30 дней? Они сохранятся отдельно.')) return;
+  var d = load();
+  var cut = new Date(); cut.setDate(cut.getDate() - 30);
+  var cutStr = cut.toISOString().slice(0,10);
+  var old = d.trips.filter(function(t){return t.date < cutStr;});
+  var fresh = d.trips.filter(function(t){return t.date >= cutStr;});
+  if (!old.length) { toast('Нет рейсов старше 30 дней'); return; }
+  var archUrl = 'https://buzachi-29b84-default-rtdb.europe-west1.firebasedatabase.app/archive_' + cutStr + '.json';
+  var ok = await fetch(archUrl, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(old)}).then(function(r){return r.ok;}).catch(function(){return false;});
+  if (!ok) { toast('Ошибка архивации', 'err'); return; }
+  d.trips = fresh;
+  save(d);
+  toast('Архивировано ' + old.length + ' рейсов (старше ' + cutStr + ')');
+  render(activeTab);
+}
+
+function addManualTrip() {
+  var d = load();
+  var trEl = document.getElementById('mtTruck'), tr = trEl ? get(d.trucks, trEl.value) : null;
+  var mat = document.getElementById('mtMat').value;
+  var date = document.getElementById('mtDate').value || today();
+  var cnt = +document.getElementById('mtCount').value || 1;
+  var from = parseVal(document.getElementById('mtFrom').value);
+  var to = parseVal(document.getElementById('mtTo').value);
+  if (!tr) return toast('Выберите самосвал', 'err');
+  var rt = ensureRoute(d, from.type, from.id, to.type, to.id);
+  var baseTs = new Date(date + 'T12:00:00').getTime() || Date.now();
+  for (var i = 0; i < cnt; i++) {
+    d.trips.push({id:uid(), ts:baseTs+i*60000, date:date,
+      truckId:tr.id, plate:tr.plate, driver:tr.driver, contractorId:tr.contractorId,
+      material:mat, m3:MAT_VOL[mat],
+      fromType:from.type, fromId:from.id, toType:to.type, toId:to.id,
+      routeKey:rt.key, by:CU.login, manual:true});
+  }
+  if (save(d)) { toast('Добавлено ' + cnt + ' рейс за ' + date); render(activeTab); }
+}
+
 // Firebase handles initial data load via dbSubscribe()
 </script>
 </body>
