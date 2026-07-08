@@ -285,7 +285,7 @@ function dbSubscribe() {
     toast('Нет связи с базой данных', 'err');
   });
 
-  // Poll every 8 seconds for updates from other devices
+  // Poll every 4 seconds — fast enough for concurrent marking
   _pollTimer = setInterval(async () => {
     if (!CU) return;
     try {
@@ -293,18 +293,24 @@ function dbSubscribe() {
       if (!val) return;
       const merged = mergeCache(val);
       // Only update if data actually changed and we didn't just save
-      if (Date.now() - _lastSaveTime > 3000) {
-        const changed = JSON.stringify(merged) !== JSON.stringify(_cache);
-        if (changed) {
-          _cache = merged;
-          if (activeTab) {
-            let skip = (activeTab === 'marker' && sessGet('mat') && sessGet('src'));
-            if (!skip) render(activeTab);
+      const changed = JSON.stringify(merged) !== JSON.stringify(_cache);
+      if (changed) {
+        _cache = merged;
+        if (activeTab) {
+          // On marker tab: always refresh trip list but keep truck selection
+          if (activeTab === 'marker') {
+            // Only refresh if not mid-save (avoid flicker)
+            if (Date.now() - _lastSaveTime > 1500) {
+              // Refresh just the trip count and list, not full page
+              refreshMarkerTrips(merged);
+            }
+          } else {
+            render(activeTab);
           }
         }
       }
     } catch(e) {}
-  }, 8000);
+  }, 4000);
 }
 
 function dbUnsubscribe() {
@@ -714,8 +720,8 @@ function pageMarker(){
     +'<div class="markbox">'
     +'<button id="confirmBtn" class="btn btn-green" style="width:100%;padding:16px;font-size:17px;border-radius:12px" onclick="confirmTrip()" disabled>Выберите самосвал</button>'
     +'</div>'
-    +'<div class="panel"><div class="ph"><div class="pt">Рейсы сегодня — '+esc(obj.name)+'</div><span class="badge b-blue">'+todayTrips.length+'</span></div>'
-    +tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Материал</th><th>м³</th></tr></thead><tbody>'+rows+'</tbody></table>')+'</div>';
+    +'<div class="panel"><div class="ph"><div class="pt">Рейсы сегодня — '+esc(obj.name)+'</div><span class="badge b-blue" id="markerTripCount">'+todayTrips.length+'</span></div>'
+    +tbl('<table class="tbl"><thead><tr><th>Время</th><th>Самосвал</th><th>Материал</th><th>м³</th></tr></thead><tbody id="markerTripBody">'+rows+'</tbody></table>')+'</div>';
 }
 
 function switchObject(oid){
@@ -802,34 +808,41 @@ function confirmTrip(){
 
 function addTripAtomic(trip, d, plateName) {
   // POST to Firebase creates unique child key atomically
+  // Immediately update local cache — don't wait for server
+  if (_cache) {
+    if (!Array.isArray(_cache.trips)) _cache.trips = [];
+    _cache.trips.push(trip);
+  }
+  selTruck = '';
+  toast('Рейс ✓ — ' + plateName);
+  render(activeTab);
+
+  // Then save to Firebase in background
   fetch(FB_TRIPS_URL, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(trip)
   }).then(function(r) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }).then(function(res) {
-    // Also update local cache
-    if (_cache && _cache.trips) {
-      _cache.trips.push(trip);
-    }
-    // Ensure route is saved (routes don't change often)
+    // Save route if new
     if (d) {
       var dFresh = load();
-      ensureRoute(dFresh, trip.fromType, trip.fromId, trip.toType, trip.toId);
-      // Save routes/marker separately (not trips — already saved atomically)
-      var slim = Object.assign({}, dFresh);
-      slim.trips = dFresh.trips; // keep existing trips in cache
-      save(dFresh);
+      var rt2 = ensureRoute(dFresh, trip.fromType, trip.fromId, trip.toType, trip.toId);
+      if (rt2) {
+        fetch(FB_URL.replace('.json','') + '/routes.json', {
+          method: 'PUT',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(dFresh.routes)
+        }).catch(function(){});
+      }
     }
-    toast('Рейс записан ✓ — ' + plateName);
-    selTruck = '';
-    render(activeTab);
   }).catch(function(err) {
-    toast('Ошибка: ' + err.message, 'err');
-    let btn = document.getElementById('confirmBtn');
-    if (btn) { btn.disabled = false; btn.textContent = '✓ Отметить рейс'; }
+    // Remove from cache if save failed
+    if (_cache && _cache.trips) {
+      _cache.trips = _cache.trips.filter(function(t){return t.id !== trip.id;});
+    }
+    toast('Ошибка сохранения: ' + err.message, 'err');
+    render(activeTab);
   });
 }
 
@@ -1982,6 +1995,31 @@ function addManualTrip() {
       routeKey:rt.key, by:CU.login, manual:true});
   }
   if (save(d)) { toast('Добавлено ' + cnt + ' рейс за ' + date); render(activeTab); }
+}
+
+
+// Refresh only the trip list on marker page without losing truck selection
+function refreshMarkerTrips(d) {
+  var curObj = curObjId();
+  if (!curObj) return;
+  var todayTrips = d.trips.filter(function(t){
+    return t.date === today() && t.toType === 'object' && t.toId === curObj;
+  }).sort(function(a,b){return b.ts - a.ts;});
+  // Update trip count badge
+  var badge = document.querySelector('.markbox-count');
+  if (badge) badge.textContent = todayTrips.length;
+  // Update trip table
+  var tbody = document.getElementById('markerTripBody');
+  if (!tbody) return;
+  var rows = todayTrips.slice(0,50).map(function(t){
+    return '<tr><td>'+time(t.ts)+'</td><td><b class="plate">'+esc(t.plate)+'</b></td>'
+      +'<td><span class="badge '+(t.material==='Грунт'?'b-orange':'b-blue')+'">'+t.material+'</span></td>'
+      +'<td class="num">'+fmt(t.m3)+'</td></tr>';
+  }).join('') || '<tr><td colspan="4"><div class="empty">Рейсов нет</div></td></tr>';
+  tbody.innerHTML = rows;
+  // Update trip count in panel header
+  var countEl = document.getElementById('markerTripCount');
+  if (countEl) countEl.textContent = todayTrips.length;
 }
 
 // Firebase handles initial data load via dbSubscribe()
